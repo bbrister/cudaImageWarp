@@ -5,7 +5,8 @@
 #include <cuda.h>
 
 #include <sift3d/imtypes.h>
-#include <sift3d/imutil.h>
+
+#include "cudaImageWarp.h" // Need this to get C linkage on exported functions
 
 #define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide integers and ceil
 #define AFFINE_WARP(x, y, z, f4) /* Warp using a float4 */ \
@@ -14,16 +15,6 @@
 /********************/
 /* CUDA ERROR CHECK */
 /********************/
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
-{
-    if (code != cudaSuccess) 
-    {
-        fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-        if (abort) { exit(code); }
-    }
-}
-
 typedef unsigned int  uint;
 
 texture<float, 3, cudaReadModeElementType> tex;  // 3D texture
@@ -32,7 +23,7 @@ texture<float, 3, cudaReadModeElementType> tex;  // 3D texture
 /* TEXTURE-BASED TRILINEAR INTERPOLATION KERNEL */
 /************************************************/
 __global__ void
-d_render(float *d_output, const uint nx, const uint ny, const uint nz, 
+warp(float *d_output, const uint nx, const uint ny, const uint nz, 
         const float4 xWarp, const float4 yWarp, const float4 zWarp)
 {
     const uint x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -57,41 +48,40 @@ d_render(float *d_output, const uint nx, const uint ny, const uint nz,
     d_output[idx] = voxel;
 }
 
-int main(int argc, char *argv[]) {
+/* Warp an image in-place.  Params is an array of 12 floats, in row-major 
+ * order. */
+int cuda_image_warp(Image *const im, const float *const params) {
 
-    Image im;
+    // Convert the input
+    const float4 xWarp = {params[0], params[1], params[2], params[3]};
+    const float4 yWarp = {params[4], params[5], params[6], params[7]};
+    const float4 zWarp = {params[8], params[9], params[10], params[11]}; 
 
-    // The transform parameters
-    const float4 xWarp = {1.0, 0.0, 0.0, 0.0};
-    const float4 yWarp = {0.0, 0.5, 0.0, 0.0};
-    const float4 zWarp = {0.0, 0.0, 2.0, 0.0};
+    // Intermediates
+    float *d_output = NULL;
 
-    const int num_args = 1;
+#define CLEANUP { \
+    if (d_output != NULL) \
+        cudaFree(d_output); \
+} 
 
-    // Get the inputs
-    if (argc != num_args + 1) {
-        fprintf(stderr, "This program takes %d argument(s)\n", num_args);
-        return -1;
-    }
+#define gpuAssert(code, file, line) { \
+    if (code != cudaSuccess) { \
+        fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), \
+                file, line); \
+        CLEANUP \
+        return -1; \
+       }  \
+} \
 
-    const char* filename = argv[1];
-
-    // Initialize the image
-    init_im(&im);
-
-    // --- Loading data from file
-    if (im_read(filename, &im)) {
-        fprintf(stderr, "Error reading file %s\n", filename);
-        return -1;
-    }
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
     // --- Allocate device memory for output
-    float *d_output = NULL;
-    const size_t im_mem_size = im.size * sizeof(float);
+    const size_t im_mem_size = im->size * sizeof(float);
     gpuErrchk(cudaMalloc((void**)&d_output, im_mem_size));
 
     // --- Create 3D array
-    const cudaExtent volumeSize = make_cudaExtent(im.nx, im.ny, im.nz);
+    const cudaExtent volumeSize = make_cudaExtent(im->nx, im->ny, im->nz);
 
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
     cudaArray *d_inputArray = 0;
@@ -99,8 +89,8 @@ int main(int argc, char *argv[]) {
 
     // --- Copy data to 3D array (host to device)
     cudaMemcpy3DParms copyParams = {0};
-    copyParams.srcPtr   = make_cudaPitchedPtr(im.data, 
-        im.nx * sizeof(float), im.nx, im.ny);
+    copyParams.srcPtr   = make_cudaPitchedPtr(im->data, 
+        im->nx * sizeof(float), im->nx, im->ny);
     copyParams.dstArray = d_inputArray;
     copyParams.extent   = volumeSize;
     copyParams.kind     = cudaMemcpyHostToDevice;
@@ -118,18 +108,18 @@ int main(int argc, char *argv[]) {
 
     // --- Launch the interpolation kernel
     const dim3 blockSize(16, 16, 1);
-    const dim3 gridSize(DIVC(im.nx, blockSize.x), DIVC(im.ny, blockSize.y),
-            DIVC(im.nz, blockSize.z));
-    d_render<<<gridSize, blockSize>>>(d_output, im.nx, im.ny, im.nz, xWarp,
+    const dim3 gridSize(DIVC(im->nx, blockSize.x), DIVC(im->ny, blockSize.y),
+            DIVC(im->nz, blockSize.z));
+    warp<<<gridSize, blockSize>>>(d_output, im->nx, im->ny, im->nz, xWarp,
         yWarp, zWarp);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
     // --- Copy the interpolated data to the host, in-place
-    gpuErrchk(cudaMemcpy(im.data,d_output,im_mem_size,cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(im->data,d_output,im_mem_size,cudaMemcpyDeviceToHost));
 
-    // Write to a file
-    im_write("out_image.nii.gz", &im); 
-
+    CLEANUP
     return 0;
+
+#undef CLEANUP
 }
