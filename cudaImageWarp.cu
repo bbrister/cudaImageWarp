@@ -4,8 +4,6 @@
 #include <cuda_runtime.h>
 #include <cuda.h>
 
-#include <sift3d/imtypes.h>
-
 #include "cudaImageWarp.h" // Need this to get C linkage on exported functions
 
 #define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide integers and ceil
@@ -48,9 +46,15 @@ warp(float *d_output, const uint nx, const uint ny, const uint nz,
     d_output[idx] = voxel;
 }
 
-/* Warp an image in-place.  Params is an array of 12 floats, in row-major 
- * order. */
-int cuda_image_warp(Image *const im, const float *const params) {
+/* Warp an image in-place.  
+ * Parameters:
+ *  data - an array of nx * ny * nz floats, strided in (x,y,z) order
+ *  nx, ny, nz - the image dimensions
+ *  params - an array of 12 floats, in row-major order
+ *
+ * Returns 0 on success, nonzero otherwise. */
+int cuda_image_warp(float *const data, const int nx, const int ny, 
+        const int nz, const float *const params) {
 
     // Convert the input
     const float4 xWarp = {params[0], params[1], params[2], params[3]};
@@ -77,11 +81,11 @@ int cuda_image_warp(Image *const im, const float *const params) {
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
     // --- Allocate device memory for output
-    const size_t im_mem_size = im->size * sizeof(float);
+    const size_t im_mem_size = nx * ny * nz * sizeof(float);
     gpuErrchk(cudaMalloc((void**)&d_output, im_mem_size));
 
     // --- Create 3D array
-    const cudaExtent volumeSize = make_cudaExtent(im->nx, im->ny, im->nz);
+    const cudaExtent volumeSize = make_cudaExtent(nx, ny, nz);
 
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
     cudaArray *d_inputArray = 0;
@@ -89,8 +93,8 @@ int cuda_image_warp(Image *const im, const float *const params) {
 
     // --- Copy data to 3D array (host to device)
     cudaMemcpy3DParms copyParams = {0};
-    copyParams.srcPtr   = make_cudaPitchedPtr(im->data, 
-        im->nx * sizeof(float), im->nx, im->ny);
+    copyParams.srcPtr   = make_cudaPitchedPtr(data, 
+        nx * sizeof(float), nx, ny);
     copyParams.dstArray = d_inputArray;
     copyParams.extent   = volumeSize;
     copyParams.kind     = cudaMemcpyHostToDevice;
@@ -108,18 +112,19 @@ int cuda_image_warp(Image *const im, const float *const params) {
 
     // --- Launch the interpolation kernel
     const dim3 blockSize(16, 16, 1);
-    const dim3 gridSize(DIVC(im->nx, blockSize.x), DIVC(im->ny, blockSize.y),
-            DIVC(im->nz, blockSize.z));
-    warp<<<gridSize, blockSize>>>(d_output, im->nx, im->ny, im->nz, xWarp,
+    const dim3 gridSize(DIVC(nx, blockSize.x), DIVC(ny, blockSize.y),
+            DIVC(nz, blockSize.z));
+    warp<<<gridSize, blockSize>>>(d_output, nx, ny, nz, xWarp,
         yWarp, zWarp);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
     // --- Copy the interpolated data to the host, in-place
-    gpuErrchk(cudaMemcpy(im->data,d_output,im_mem_size,cudaMemcpyDeviceToHost));
+    gpuErrchk(cudaMemcpy(data,d_output,im_mem_size,cudaMemcpyDeviceToHost));
 
     CLEANUP
     return 0;
 
 #undef CLEANUP
 }
+

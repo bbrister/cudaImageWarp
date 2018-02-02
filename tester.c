@@ -37,8 +37,13 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
+    if (im.nc != 1) {
+        fputs("Multi-channel images are not supported\n", stderr);
+        return -1;
+    }
+
     // Warp the image
-    if (cuda_image_warp(&im, params)) {
+    if (cuda_image_warp(im.data, im.nx, im.ny, im.nz, params)) {
         fputs("Error warping image", stderr);
         return -1;
     }
