@@ -35,9 +35,16 @@ find_package (SIFT3D REQUIRED)
 find_package (CUDA REQUIRED)
 
 # Compile the library
-cuda_add_library(cudaImageWarp cudaImageWarp.cu)
+cuda_add_library(cudaImageWarp SHARED cudaImageWarp.cu)
 set_property(TARGET cudaImageWarp
              PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+
+# Install the library
+install (TARGETS cudaImageWarp
+                RUNTIME DESTINATION lib 
+                LIBRARY DESTINATION lib
+                ARCHIVE DESTINATION bin
+)
 
 if(APPLE)
   # We need to add the path to the driver (libcuda.dylib) as an rpath, 
