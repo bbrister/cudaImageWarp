@@ -23,6 +23,7 @@ warpfun.argtypes = [
         ctypes.c_int, 
         ctypes.c_int,
         ctypes.c_int,
+        ctypes.c_int,
         ctypes.c_void_p
         ]
 warpfun.restype = ctypes.c_int

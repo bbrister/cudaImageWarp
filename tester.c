@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Warp the image
-    if (cuda_image_warp(im.data, im.nx, im.ny, im.nz, params)) {
+    if (cuda_image_warp(im.data, im.nx, im.ny, im.nz, 1, params)) {
         fputs("Error warping image", stderr);
         return -1;
     }

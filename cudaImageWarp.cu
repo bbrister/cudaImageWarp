@@ -50,11 +50,12 @@ warp(float *d_output, const uint nx, const uint ny, const uint nz,
  * Parameters:
  *  data - an array of nx * ny * nz floats, strided in (x,y,z) order
  *  nx, ny, nz - the image dimensions
+ *  filter_mode - use 0 for nearest neighbor, 1 for linear
  *  params - an array of 12 floats, in row-major order
  *
  * Returns 0 on success, nonzero otherwise. */
 int cuda_image_warp(float *const data, const int nx, const int ny, 
-        const int nz, const float *const params) {
+        const int nz, const int filter_mode, const float *const params) {
 
     // Convert the input
     const float4 xWarp = {params[0], params[1], params[2], params[3]};
@@ -63,10 +64,13 @@ int cuda_image_warp(float *const data, const int nx, const int ny,
 
     // Intermediates
     float *d_output = NULL;
+    cudaArray *d_input = NULL;
 
 #define CLEANUP { \
     if (d_output != NULL) \
         cudaFree(d_output); \
+    if (d_input != NULL) \
+        cudaFree(d_input); \
 } 
 
 #define gpuAssert(code, file, line) { \
@@ -88,27 +92,39 @@ int cuda_image_warp(float *const data, const int nx, const int ny,
     const cudaExtent volumeSize = make_cudaExtent(nx, ny, nz);
 
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
-    cudaArray *d_inputArray = 0;
-    gpuErrchk(cudaMalloc3DArray(&d_inputArray, &channelDesc, volumeSize));
+    gpuErrchk(cudaMalloc3DArray(&d_input, &channelDesc, volumeSize));
 
     // --- Copy data to 3D array (host to device)
     cudaMemcpy3DParms copyParams = {0};
     copyParams.srcPtr   = make_cudaPitchedPtr(data, 
         nx * sizeof(float), nx, ny);
-    copyParams.dstArray = d_inputArray;
+    copyParams.dstArray = d_input;
     copyParams.extent   = volumeSize;
     copyParams.kind     = cudaMemcpyHostToDevice;
     gpuErrchk(cudaMemcpy3D(&copyParams));
 
     // --- Set texture parameters
     tex.normalized = false; // access with un-normalized texture coordinates
-    tex.filterMode = cudaFilterModeLinear; // linear interpolation
     tex.addressMode[0] = cudaAddressModeBorder; // wrap texture coordinates
     tex.addressMode[1] = cudaAddressModeBorder;
     tex.addressMode[2] = cudaAddressModeBorder;
+    switch (filter_mode) {
+        case 0:
+            // Nearest neighbor interpolation
+            tex.filterMode = cudaFilterModePoint;
+            break;
+        case 1:
+            // Linear interpolation
+            tex.filterMode = cudaFilterModeLinear;
+            break;
+        default:
+            fprintf(stderr, "Unrecognized filter_mode: %d \n", filter_mode);
+            CLEANUP
+            return -1;
+    }
 
     // --- Bind array to 3D texture
-    gpuErrchk(cudaBindTextureToArray(tex, d_inputArray, channelDesc));
+    gpuErrchk(cudaBindTextureToArray(tex, d_input, channelDesc));
 
     // --- Launch the interpolation kernel
     const dim3 blockSize(16, 16, 1);

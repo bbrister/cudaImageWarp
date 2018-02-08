@@ -1,4 +1,4 @@
-import nibabel as nib
+import nibabel as nib 
 import numpy as np
 
 import sys
@@ -20,8 +20,8 @@ im = nib.load(inPath)
 data = im.get_data()
 
 # Warp
-data_warp = cudaImageWarp.cudaImageWarp(data, A)
+dataWarp = cudaImageWarp.cudaImageWarp(data, A, interp='nearest')
 
 # Write the output
-imOut = nib.Nifti1Image(data_warp, im.affine)
+imOut = nib.Nifti1Image(dataWarp, im.affine)
 nib.save(imOut, outPath)
