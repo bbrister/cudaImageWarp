@@ -28,9 +28,6 @@ if (APPLE)
         set(CMAKE_MACOSX_RPATH ON)
 endif()
 
-# Find SIFT3D
-find_package (SIFT3D REQUIRED)
-
 # Find CUDA
 find_package (CUDA REQUIRED)
 
@@ -38,6 +35,7 @@ find_package (CUDA REQUIRED)
 cuda_add_library(cudaImageWarp SHARED cudaImageWarp.cu)
 set_property(TARGET cudaImageWarp
              PROPERTY CUDA_SEPARABLE_COMPILATION ON)
+target_include_directories (cudaImageWarp PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Install the library
 install (TARGETS cudaImageWarp
@@ -46,16 +44,16 @@ install (TARGETS cudaImageWarp
                 ARCHIVE DESTINATION bin
 )
 
-if(APPLE)
+# Install the header file
+set (CUDA_IMAGE_WARP_H_FILE cudaImageWarp.h)
+install (FILES ${CUDA_IMAGE_WARP_H} DESTINATION include)
+
+if (APPLE)
   # We need to add the path to the driver (libcuda.dylib) as an rpath, 
   # so that the static cuda runtime can find it at runtime.
   set_property(TARGET cudaImageWarp
                PROPERTY
                BUILD_RPATH ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
-endif()
+endif ()
 
-# Compile the test program
-add_executable (test tester.c)
-target_include_directories (test PRIVATE ${SIFT3D_INCLUDE_DIRS})
-target_link_libraries (test PRIVATE cudaImageWarp ${SIFT3D_LIBRARIES})
-set_target_properties (test PROPERTIES LINKER_LANGUAGE CXX)
+add_subdirectory (test)
