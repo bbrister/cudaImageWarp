@@ -8,13 +8,24 @@ Python module initializer for CUDA image warper.
 import os
 import ctypes
 
-# Get the script location
-scriptDir = os.path.dirname(os.path.abspath(__file__))
-libDir = os.path.join(scriptDir, '..', '..', 'build', 'lib')
-libName = os.path.join(libDir, 'libcudaImageWarp.so')
-
 # Load the library
-dll = ctypes.cdll.LoadLibrary(libName)
+libName = 'libcudaImageWarp.so'
+scriptDir = os.path.abspath(os.path.dirname(__file__))
+prefixes = [scriptDir, '/usr/lib', '/usr/local/lib']
+
+# Try to find the library using each of the available prefixes, in order
+dll = None
+searched = []
+for prefix in prefixes:
+    searchName = os.path.join(prefix, libName)
+    try:
+        dll = ctypes.cdll.LoadLibrary(searchName)
+    except OSError:
+        searched.append(searchName)
+
+if dll is None:
+   raise OSError('Cannot find library ' + libName + '. Searched the ' +
+        'following paths: ' + '\n'.join(searched))
 
 # Extract the warping function and set up its signature
 warpfun = dll.cuda_image_warp

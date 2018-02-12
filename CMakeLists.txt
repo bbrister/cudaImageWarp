@@ -48,6 +48,18 @@ install (TARGETS cudaImageWarp
 set (CUDA_IMAGE_WARP_H_FILE cudaImageWarp.h)
 install (FILES ${CUDA_IMAGE_WARP_H} DESTINATION include)
 
+# Copy the python wrappers to the build tree
+add_custom_command (TARGET cudaImageWarp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/python ${CMAKE_BINARY_DIR}
+)
+
+# Copy the library to the python package
+add_custom_command (TARGET cudaImageWarp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy 
+    $<TARGET_FILE:cudaImageWarp> ${CMAKE_BINARY_DIR}/pyCudaImageWarp
+)
+
 if (APPLE)
   # We need to add the path to the driver (libcuda.dylib) as an rpath, 
   # so that the static cuda runtime can find it at runtime.
@@ -56,4 +68,5 @@ if (APPLE)
                BUILD_RPATH ${CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES})
 endif ()
 
+# Build the tests
 add_subdirectory (test)
