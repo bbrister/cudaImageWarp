@@ -66,23 +66,30 @@ int cuda_image_warp(float *const data, const int nx, const int ny,
     float *d_output = NULL;
     cudaArray *d_input = NULL;
 
-#define CLEANUP { \
-    if (d_output != NULL) \
-        cudaFree(d_output); \
-    if (d_input != NULL) \
-        cudaFree(d_input); \
-} 
-
 #define gpuAssert(code, file, line) { \
     if (code != cudaSuccess) { \
         fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), \
                 file, line); \
-        CLEANUP \
+        if (d_output != NULL) \
+            cudaFree(d_output); \
+        if (d_input != NULL) \
+            cudaFreeArray(d_input); \
         return -1; \
-       }  \
+    }  \
 } \
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+
+#define CLEANUP { \
+    if (d_output != NULL) { \
+        cudaFree(d_output); \
+        gpuErrchk(cudaPeekAtLastError()); \
+    } \
+    if (d_input != NULL) { \
+        cudaFreeArray(d_input); \
+        gpuErrchk(cudaPeekAtLastError()); \
+    } \
+} 
 
     // --- Allocate device memory for output
     const size_t im_mem_size = nx * ny * nz * sizeof(float);
@@ -134,6 +141,9 @@ int cuda_image_warp(float *const data, const int nx, const int ny,
         yWarp, zWarp);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
+
+    // --- Unbind the texture memory
+    gpuErrchk(cudaUnbindTexture(tex));
 
     // --- Copy the interpolated data to the host, in-place
     gpuErrchk(cudaMemcpy(data,d_output,im_mem_size,cudaMemcpyDeviceToHost));
