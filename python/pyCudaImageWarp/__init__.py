@@ -30,11 +30,11 @@ if dll is None:
 # Extract the warping function and set up its signature
 warpfun = dll.cuda_image_warp
 warpfun.argtypes = [
-        ctypes.c_void_p, 
+        ctypes.POINTER(ctypes.c_float), 
         ctypes.c_int, 
         ctypes.c_int,
         ctypes.c_int,
         ctypes.c_int,
-        ctypes.c_void_p
+        ctypes.POINTER(ctypes.c_float)
         ]
 warpfun.restype = ctypes.c_int

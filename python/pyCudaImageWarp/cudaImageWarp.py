@@ -24,21 +24,24 @@ def cudaImageWarp(im, A, interp='linear'):
                 'linear' : 1
         }
 
-        # Convert to float32
-        imFloat = im.astype(np.float32)
-        A = A.astype(np.float32)
+        # Copy the image and extract its C interface
+        imFloat = np.copy(im).astype(np.float32)
+        AFloat = A.astype(np.float32)
+        imC = imFloat.ctypes
+        AC = AFloat.ctypes
 
         # Warp the image
         ret = pyCudaImageWarp.warpfun(
-                ctypes.c_void_p(imFloat.ctypes.data),
+                imC.data_as(ctypes.POINTER(ctypes.c_float)),
                 ctypes.c_int(im.shape[0]), 
                 ctypes.c_int(im.shape[1]), 
                 ctypes.c_int(im.shape[2]), 
                 ctypes.c_int(interpMap[interp]),
-                ctypes.c_void_p(A.ctypes.data))
+                AC.data_as(ctypes.POINTER(ctypes.c_float))
+        )
 
         if ret != 0:
                 raise ValueError(ret)
 
-        # Convert back to the original type
+        # Save the image as the original type
         return imFloat.astype(im.dtype)
