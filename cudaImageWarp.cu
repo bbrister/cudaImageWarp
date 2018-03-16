@@ -6,7 +6,7 @@
 
 #include "cudaImageWarp.h" // Need this to get C linkage on exported functions
 
-#define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide integers and ceil
+#define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide positive integers and ceil
 #define AFFINE_WARP(x, y, z, f4) /* Warp using a float4 */ \
         (x * f4.x + y * f4.y + z * f4.z + f4.w)
 
@@ -48,14 +48,19 @@ warp(float *d_output, const uint nx, const uint ny, const uint nz,
 
 /* Warp an image in-place.  
  * Parameters:
- *  data - an array of nx * ny * nz floats, strided in (x,y,z) order
- *  nx, ny, nz - the image dimensions
+ *  input - an array of nxi * nyi * nzi floats, strided in (x,y,z) order
+ *  nxi, nyi, nzi - the input image dimensions
+ *  output - an array of nxo * nyo * nzo floats, strided in (x,y,z) order
+ *  nxo, nyo, nzo - the output image dimensions
  *  filter_mode - use 0 for nearest neighbor, 1 for linear
  *  params - an array of 12 floats, in row-major order
  *
  * Returns 0 on success, nonzero otherwise. */
-int cuda_image_warp(float *const data, const int nx, const int ny, 
-        const int nz, const int filter_mode, const float *const params) {
+int cuda_image_warp(const float *const input, 
+        const int nxi, const int nyi, const int nzi, 
+        float *const output,
+        const int nxo, const int nyo, const int nzo, 
+        const int filter_mode, const float *const params) {
 
     // Convert the input
     const float4 xWarp = {params[0], params[1], params[2], params[3]};
@@ -92,21 +97,21 @@ int cuda_image_warp(float *const data, const int nx, const int ny,
 } 
 
     // --- Allocate device memory for output
-    const size_t im_mem_size = nx * ny * nz * sizeof(float);
-    gpuErrchk(cudaMalloc((void**)&d_output, im_mem_size));
+    const size_t out_size = nxo * nyo * nzo * sizeof(float);
+    gpuErrchk(cudaMalloc((void**)&d_output, out_size));
 
     // --- Create 3D array
-    const cudaExtent volumeSize = make_cudaExtent(nx, ny, nz);
+    const cudaExtent inVolumeSize = make_cudaExtent(nxi, nyi, nzi);
 
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
-    gpuErrchk(cudaMalloc3DArray(&d_input, &channelDesc, volumeSize));
+    gpuErrchk(cudaMalloc3DArray(&d_input, &channelDesc, inVolumeSize));
 
-    // --- Copy data to 3D array (host to device)
+    // --- Copy the input data to a 3D array (host to device)
     cudaMemcpy3DParms copyParams = {0};
-    copyParams.srcPtr   = make_cudaPitchedPtr(data, 
-        nx * sizeof(float), nx, ny);
+    copyParams.srcPtr   = make_cudaPitchedPtr((void *) input,
+        nxi * sizeof(float), nxi, nyi);
     copyParams.dstArray = d_input;
-    copyParams.extent   = volumeSize;
+    copyParams.extent   = inVolumeSize;
     copyParams.kind     = cudaMemcpyHostToDevice;
     gpuErrchk(cudaMemcpy3D(&copyParams));
 
@@ -135,9 +140,9 @@ int cuda_image_warp(float *const data, const int nx, const int ny,
 
     // --- Launch the interpolation kernel
     const dim3 blockSize(16, 16, 1);
-    const dim3 gridSize(DIVC(nx, blockSize.x), DIVC(ny, blockSize.y),
-            DIVC(nz, blockSize.z));
-    warp<<<gridSize, blockSize>>>(d_output, nx, ny, nz, xWarp,
+    const dim3 gridSize(DIVC(nxo, blockSize.x), DIVC(nyo, blockSize.y),
+            DIVC(nzo, blockSize.z));
+    warp<<<gridSize, blockSize>>>(d_output, nxo, nyo, nzo, xWarp,
         yWarp, zWarp);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
@@ -145,8 +150,8 @@ int cuda_image_warp(float *const data, const int nx, const int ny,
     // --- Unbind the texture memory
     gpuErrchk(cudaUnbindTexture(tex));
 
-    // --- Copy the interpolated data to the host, in-place
-    gpuErrchk(cudaMemcpy(data,d_output,im_mem_size,cudaMemcpyDeviceToHost));
+    // --- Copy the output data to the host
+    gpuErrchk(cudaMemcpy(output,d_output,out_size,cudaMemcpyDeviceToHost));
 
     CLEANUP
     return 0;

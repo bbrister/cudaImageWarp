@@ -11,7 +11,7 @@
 
 int main(int argc, char *argv[]) {
 
-    Image im;
+    Image in, out;
 
     // The transform parameters
     const float params[] = {1.0, 0.0, 0.0, 0.0,
@@ -28,26 +28,30 @@ int main(int argc, char *argv[]) {
 
     const char* filename = argv[1];
 
-    // Initialize the image
-    init_im(&im);
+    // Initialize the input image
+    init_im(&in);
 
     // Read the image from a file
-    if (im_read(filename, &im)) {
+    if (im_read(filename, &in)) {
         fprintf(stderr, "Error reading file %s\n", filename);
         return -1;
     }
 
-    if (im.nc != 1) {
+    if (in.nc != 1) {
         fputs("Multi-channel images are not supported\n", stderr);
         return -1;
     }
 
+    // Initialize the output image
+    init_im_with_dims(&out, in.nx, in.ny, in.nz, in.nc);
+
     // Warp the image
-    if (cuda_image_warp(im.data, im.nx, im.ny, im.nz, 1, params)) {
+    if (cuda_image_warp(in.data, in.nx, in.ny, in.nz, 
+        out.data, out.nx, out.ny, out.nz, 1, params)) {
         fputs("Error warping image", stderr);
         return -1;
     }
 
     // Write to a file
-    return im_write("out_image.nii.gz", &im); 
+    return im_write("out_image.nii.gz", &out); 
 }

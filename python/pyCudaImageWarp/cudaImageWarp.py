@@ -17,8 +17,14 @@ Arguments:
 		z-coordinates. See im for more details.
         interp -- The interpolation type. Supported values are either 
                 'linear' (default) or 'nearest'.
+        shape -- The shape of the output. By default, this is the same as the 
+                input. This can be used to crop or pad an image.
 """
-def cudaImageWarp(im, A, interp='linear'):
+def cudaImageWarp(im, A, interp='linear', shape=None):
+
+	# Default to the same shape as im
+	if shape is None:
+	    shape = im.shape
 
 	# Verify inputs
 	ndim = 3;
@@ -26,6 +32,9 @@ def cudaImageWarp(im, A, interp='linear'):
 	if len(im.shape) != ndim:
 		raise ValueError("im has shape %s, expected %d dimensions" % \
 			(im.shape, ndim))
+	if len(shape) != ndim:
+		raise ValueError("received output shape %s, expected %d "
+			"dimensions" % (shape, ndim))
 	if not np.equal(A.shape, Ashape).all():
 		raise ValueError("Expected A shape %s, received %s" % \
 			(Ashape, A.shape))
@@ -38,8 +47,13 @@ def cudaImageWarp(im, A, interp='linear'):
 
         # Convert the inputs to C float arrays
 	dtype = im.dtype
-        im = np.require(im, dtype='float32', requirements=['F', 'A', 'W', 'O'])
+        im = np.require(im, dtype='float32', requirements=['F', 'A'])
         A = np.require(A, dtype='float32', requirements=['C', 'A'])
+
+        # Create a C float array for the output
+        out = np.zeros(shape, dtype='float32')
+        out = np.require(out, dtype='float32', 
+                requirements=['F', 'A', 'W', 'O'])
 
         # Warp the image
         ret = pyCudaImageWarp.warpfun(
@@ -47,6 +61,10 @@ def cudaImageWarp(im, A, interp='linear'):
                 ctypes.c_int(im.shape[0]), 
                 ctypes.c_int(im.shape[1]), 
                 ctypes.c_int(im.shape[2]), 
+                out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+		ctypes.c_int(shape[0]),
+		ctypes.c_int(shape[1]),
+		ctypes.c_int(shape[2]),
                 ctypes.c_int(interpMap[interp]),
                 A.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         )
@@ -55,4 +73,4 @@ def cudaImageWarp(im, A, interp='linear'):
                 raise ValueError(ret)
 
         # Convert the output back to the original type
-        return im.astype(dtype)
+        return out.astype(dtype)

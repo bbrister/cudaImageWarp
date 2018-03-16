@@ -5,8 +5,11 @@
 extern "C" {
 #endif
 
-int cuda_image_warp(float *const data, const int nx, const int ny, 
-        const int nz, const int filter_mode, const float *const params);
+int cuda_image_warp(const float *const input, 
+        const int nxi, const int nyi, const int nzi, 
+        float *const output,
+        const int nxo, const int nyo, const int nzo, 
+        const int filter_mode, const float *const params);
 
 #ifdef __cplusplus
 }
