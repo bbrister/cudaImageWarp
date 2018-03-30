@@ -19,8 +19,10 @@ Arguments:
                 'linear' (default) or 'nearest'.
         shape -- The shape of the output. By default, this is the same as the 
                 input. This can be used to crop or pad an image.
+	std -- The standard derviation of white Gaussian noise added to the
+		output.
 """
-def cudaImageWarp(im, A, interp='linear', shape=None):
+def cudaImageWarp(im, A, interp='linear', shape=None, std=0.0):
 
 	# Default to the same shape as im
 	if shape is None:
@@ -66,7 +68,8 @@ def cudaImageWarp(im, A, interp='linear', shape=None):
 		ctypes.c_int(shape[1]),
 		ctypes.c_int(shape[2]),
                 ctypes.c_int(interpMap[interp]),
-                A.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+                A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+		ctypes.c_float(std)
         )
 
         if ret != 0:

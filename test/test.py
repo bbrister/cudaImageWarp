@@ -19,8 +19,8 @@ A = np.array([[1, 0, 0, 30],
 im = nib.load(inPath)
 data = im.get_data()
 
-# Warp
-dataWarp = cudaImageWarp.cudaImageWarp(data, A, interp='nearest')
+# Warp and add noise
+dataWarp = cudaImageWarp.cudaImageWarp(data, A, interp='linear', std=50.0)
 
 # Write the output
 imOut = nib.Nifti1Image(dataWarp, im.affine)
