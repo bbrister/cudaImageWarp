@@ -1,6 +1,7 @@
 /* Test program for CUDA image warper */
 
 #include <stdio.h>
+#include <math.h>
 
 #include <cuda_runtime.h>
 
@@ -47,7 +48,8 @@ int main(int argc, char *argv[]) {
 
     // Warp the image
     if (cuda_image_warp(in.data, in.nx, in.ny, in.nz, 
-        out.data, out.nx, out.ny, out.nz, 1, params, 100.0f)) {
+        out.data, out.nx, out.ny, out.nz, 1, params, 100.0f, -INFINITY, 
+	INFINITY)) {
         fputs("Error warping image", stderr);
         return -1;
     }

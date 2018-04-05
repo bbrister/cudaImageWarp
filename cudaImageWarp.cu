@@ -10,20 +10,57 @@
 #include "cudaImageWarp.h" // Need this to get C linkage on exported functions
 
 #define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide positive integers and ceil
-#define AFFINE_WARP(x, y, z, f4) /* Warp using a float4 */ \
-        (x * f4.x + y * f4.y + z * f4.z + f4.w)
 
 /* Global data */
 typedef unsigned int  uint;
 
 texture<float, 3, cudaReadModeElementType> tex;  // 3D texture
 
+/* CUDA device function which does the affine warping */
+__device__ float affine_warp(const uint x, const uint y, const uint z, 
+	const float4 warp) {
+        return x * warp.x + y * warp.y + z * warp.z + warp.w;
+}
+
+/* Sample from a texture after affine warping */
+__device__ float sample_affine(float *const output, 
+    const uint x, const uint y, const uint z,
+    const float4 xWarp, const float4 yWarp, const float4 zWarp) {
+
+    const float xs = affine_warp(x, y, z, xWarp);
+    const float ys = affine_warp(x, y, z, yWarp);
+    const float zs = affine_warp(x, y, z, zWarp);
+
+    return tex3D(tex, xs, ys, zs);
+}
+
+/* Deice function to perform image post-processing */
+__device__ float postprocess(const float in, curandState_t *state, 
+	const float std, const float window_min, const float window_max) {
+
+    // Generate white Gaussian noise, if std > 0
+    const float noise = std > 0 ? curand_normal(state) * std : 0.0f;
+
+    // Add the noise
+    float out = in + noise;
+
+    // Clamp using the window bounds
+    out = max(out, window_min);
+    out = min(out, window_max);
+
+    // Normalize to [0,1] using the window
+    const float window_width = window_max - window_min;
+    return isfinite(window_width) ? (out - window_min) / window_width : out;
+}
+
 /* Image warping kernel */
 __global__ void
 warp(float *const output, curandState_t *const states, const float std,
     const uint nx, const uint ny, const uint nz, 
+    const float window_min, const float window_max,
     const float4 xWarp, const float4 yWarp, const float4 zWarp)
 {
+
 #define CUDA_SET_DIMS \
     const uint x = blockIdx.x * blockDim.x + threadIdx.x; \
     const uint y = blockIdx.y * blockDim.y + threadIdx.y; \
@@ -39,20 +76,9 @@ warp(float *const output, curandState_t *const states, const float std,
 
     CUDA_SET_DIMS
 
-    // Generate white Gaussian noise, if std > 0
-    const float noise = std > 0 ? curand_normal(states + idx) * std : 0.0f;
-
-    // Read from the 3D texture
-    const float xs = AFFINE_WARP(x, y, z, xWarp);
-    const float ys = AFFINE_WARP(x, y, z, yWarp);
-    const float zs = AFFINE_WARP(x, y, z, zWarp);
-    const float in = tex3D(tex, xs, ys, zs);
-
-    // Add the noise
-    const float out = in + noise;
-
-    // Write the output
-    output[idx] = out;
+    // Read from the 3D texture and postprocess
+    const float in = sample_affine(output, x, y, z, xWarp, yWarp, zWarp);
+    output[idx] =  postprocess(in, states + idx, std, window_min, window_max);
 }
 
 /* Initialize an RNG for each thread. This uses a different seed for each
@@ -74,13 +100,16 @@ __global__ void initRand(const int seed, curandState_t *const states,
 *  params - an array of 12 floats, in row-major order
 *  std - standard deviation for additive white Gaussian noise. Disables noise if
 *	std <= 0.
+*  window_min - the minimum value for the window. Use -INFINITY to do nothing.
+*  window_max - the maximum value for the window. Use INFINITY to do nothing.
 *
 * Returns 0 on success, nonzero otherwise. */
 int cuda_image_warp(const float *const input, 
     const int nxi, const int nyi, const int nzi, 
     float *const output,
     const int nxo, const int nyo, const int nzo, 
-    const int filter_mode, const float *const params, const float std) {
+    const int filter_mode, const float *const params, const float std,
+    const float window_min, const float window_max) {
 
     // Convert the input to CUDA datatypes
     const float4 xWarp = {params[0], params[1], params[2], params[3]};
@@ -185,8 +214,8 @@ if (d_input != NULL) { \
     }
 
     // Perform image warping and augmentation
-    warp<<<gridSize, blockSize>>>(d_output, d_states, std, nxo, nyo, nzo, xWarp,
-        yWarp, zWarp);
+    warp<<<gridSize, blockSize>>>(d_output, d_states, std, nxo, nyo, nzo, 
+	window_min, window_max, xWarp, yWarp, zWarp);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 

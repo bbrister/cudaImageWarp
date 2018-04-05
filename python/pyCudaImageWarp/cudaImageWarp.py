@@ -22,7 +22,8 @@ Arguments:
 	std -- The standard derviation of white Gaussian noise added to the
 		output.
 """
-def cudaImageWarp(im, A, interp='linear', shape=None, std=0.0):
+def cudaImageWarp(im, A, interp='linear', shape=None, std=0.0, 
+	winMin=-float('inf'), winMax=float('inf')):
 
 	# Default to the same shape as im
 	if shape is None:
@@ -69,7 +70,9 @@ def cudaImageWarp(im, A, interp='linear', shape=None, std=0.0):
 		ctypes.c_int(shape[2]),
                 ctypes.c_int(interpMap[interp]),
                 A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-		ctypes.c_float(std)
+		ctypes.c_float(std),
+		ctypes.c_float(winMin),
+		ctypes.c_float(winMax)
         )
 
         if ret != 0:

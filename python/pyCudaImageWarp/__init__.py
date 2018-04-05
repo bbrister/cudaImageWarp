@@ -40,6 +40,8 @@ warpfun.argtypes = [
         ctypes.c_int,
         ctypes.c_int,
         ctypes.POINTER(ctypes.c_float),
+        ctypes.c_float,
+        ctypes.c_float,
         ctypes.c_float
         ]
 warpfun.restype = ctypes.c_int
