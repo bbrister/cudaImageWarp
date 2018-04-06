@@ -23,5 +23,5 @@ data = im.get_data()
 dataWarp = cudaImageWarp.cudaImageWarp(data, A, interp='linear', std=50.0)
 
 # Write the output
-imOut = nib.Nifti1Image(dataWarp, im.affine)
+imOut = nib.Nifti1Image(dataWarp, im.affine, header=im.header)
 nib.save(imOut, outPath)
