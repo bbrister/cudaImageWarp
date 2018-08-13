@@ -14,8 +14,6 @@
 /* Global data */
 typedef unsigned int  uint;
 
-texture<float, 3, cudaReadModeElementType> tex;  // 3D texture
-
 /* CUDA device function which does the affine warping */
 __device__ float affine_warp(const uint x, const uint y, const uint z, 
 	const float4 warp) {
@@ -23,7 +21,8 @@ __device__ float affine_warp(const uint x, const uint y, const uint z,
 }
 
 /* Sample from a texture after affine warping */
-__device__ float sample_affine(float *const output, 
+__device__ float sample_affine(cudaTextureObject_t tex,
+    float *const output, 
     const uint x, const uint y, const uint z,
     const float4 xWarp, const float4 yWarp, const float4 zWarp) {
 
@@ -31,7 +30,7 @@ __device__ float sample_affine(float *const output,
     const float ys = affine_warp(x, y, z, yWarp);
     const float zs = affine_warp(x, y, z, zWarp);
 
-    return tex3D(tex, xs, ys, zs);
+    return tex3D<float>(tex, xs, ys, zs);
 }
 
 /* Deice function to perform image post-processing */
@@ -55,8 +54,8 @@ __device__ float postprocess(const float in, curandState_t *state,
 
 /* Image warping kernel */
 __global__ void
-warp(float *const output, curandState_t *const states, const float std,
-    const uint nx, const uint ny, const uint nz, 
+warp(cudaTextureObject_t tex, float *const output, curandState_t *const states,
+    const float std, const uint nx, const uint ny, const uint nz, 
     const float window_min, const float window_max,
     const float4 xWarp, const float4 yWarp, const float4 zWarp)
 {
@@ -77,7 +76,7 @@ warp(float *const output, curandState_t *const states, const float std,
     CUDA_SET_DIMS
 
     // Read from the 3D texture and postprocess
-    const float in = sample_affine(output, x, y, z, xWarp, yWarp, zWarp);
+    const float in = sample_affine(tex, output, x, y, z, xWarp, yWarp, zWarp);
     output[idx] =  postprocess(in, states + idx, std, window_min, window_max);
 }
 
@@ -174,28 +173,34 @@ if (d_input != NULL) { \
     copyParams.kind     = cudaMemcpyHostToDevice;
     gpuErrchk(cudaMemcpy3D(&copyParams));
 
-    // --- Set texture parameters
-    tex.normalized = false; // access with un-normalized texture coordinates
-    tex.addressMode[0] = cudaAddressModeBorder; // wrap texture coordinates
-    tex.addressMode[1] = cudaAddressModeBorder;
-    tex.addressMode[2] = cudaAddressModeBorder;
+    // --- Create the texture object
+    cudaTextureObject_t tex;
+    cudaResourceDesc    texRes;
+    memset(&texRes, 0, sizeof(cudaResourceDesc));
+    texRes.resType = cudaResourceTypeArray;
+    texRes.res.array.array  = d_input;
+    cudaTextureDesc texDescr;
+    memset(&texDescr, 0, sizeof(cudaTextureDesc));
+    texDescr.normalizedCoords = false;
+    texDescr.addressMode[0] = cudaAddressModeBorder;
+    texDescr.addressMode[1] = cudaAddressModeBorder;
+    texDescr.addressMode[2] = cudaAddressModeBorder;
+    texDescr.readMode = cudaReadModeElementType;
     switch (filter_mode) {
 	case 0:
 	    // Nearest neighbor interpolation
-	    tex.filterMode = cudaFilterModePoint;
+	    texDescr.filterMode = cudaFilterModePoint;
 	    break;
 	case 1:
 	    // Linear interpolation
-	    tex.filterMode = cudaFilterModeLinear;
+	    texDescr.filterMode = cudaFilterModeLinear;
 	    break;
 	default:
 	    fprintf(stderr, "Unrecognized filter_mode: %d \n", filter_mode);
-	    CLEANUP
+            CLEANUP
 	    return -1;
     }
-
-    // --- Bind array to 3D texture
-    gpuErrchk(cudaBindTextureToArray(tex, d_input, channelDesc));
+    gpuErrchk(cudaCreateTextureObject(&tex, &texRes, &texDescr, NULL));
 
     // Configure the block and grid sizes
     const dim3 blockSize(16, 16, 1);
@@ -214,16 +219,16 @@ if (d_input != NULL) { \
     }
 
     // Perform image warping and augmentation
-    warp<<<gridSize, blockSize>>>(d_output, d_states, std, nxo, nyo, nzo, 
+    warp<<<gridSize, blockSize>>>(tex, d_output, d_states, std, nxo, nyo, nzo, 
 	window_min, window_max, xWarp, yWarp, zWarp);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
 
-    // --- Unbind the texture memory
-    gpuErrchk(cudaUnbindTexture(tex));
-
     // --- Copy the output data to the host
     gpuErrchk(cudaMemcpy(output,d_output,out_size,cudaMemcpyDeviceToHost));
+
+    // Destroy the texture object
+    cudaDestroyTextureObject(tex);  
 
     CLEANUP
     return 0;
