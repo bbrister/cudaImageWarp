@@ -5,6 +5,14 @@
 extern "C" {
 #endif
 
+int cuda_image_warp_start(const int state_idx, const float *const input,
+    const int nxi, const int nyi, const int nzi, 
+    const int nxo, const int nyo, const int nzo, 
+    const int filter_mode, const float *const params, const float std,
+    const float window_min, const float window_max);
+
+int cuda_image_warp_finish(const int state_idx, float *const output);
+
 int cuda_image_warp(const float *const input, 
     const int nxi, const int nyi, const int nzi, 
     float *const output,

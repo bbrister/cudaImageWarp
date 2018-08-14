@@ -9,15 +9,44 @@
 
 #include "cudaImageWarp.h" // Need this to get C linkage on exported functions
 
+/* Useful macros */
 #define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide positive integers and ceil
 
-/* Global data */
+#define gpuAssert(code, file, line) { \
+if (code != cudaSuccess) { \
+    fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), \
+	    file, line); \
+    return -1; \
+}  \
+} \
+
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+
+/* Types */
 typedef unsigned int  uint;
+struct State {
+    cudaTextureObject_t tex; // Input texture
+    void *output; // Device output buffer (float)
+    curandState_t *rands; // Random number generators
+    cudaArray *input; // Device input array
+    size_t output_size; // The size of output, in bites
+    int have_tex; // True if tex was created
+};
+
+/* Function prototypes */
+static void cudaFreeAndNull(void **ptr);
+static void cudaFreeArrayAndNull(cudaArray **ptr);
+static struct State *get_state(const char *tag, const int idx);
+static int cleanup_state(const int state_idx);
+
+/* Global data */
+#define NUM_STATES 32
+struct State states[NUM_STATES];
 
 /* CUDA device function which does the affine warping */
 __device__ float affine_warp(const uint x, const uint y, const uint z, 
-	const float4 warp) {
-        return x * warp.x + y * warp.y + z * warp.z + warp.w;
+    const float4 warp) {
+    return x * warp.x + y * warp.y + z * warp.z + warp.w;
 }
 
 /* Sample from a texture after affine warping */
@@ -54,7 +83,7 @@ __device__ float postprocess(const float in, curandState_t *state,
 
 /* Image warping kernel */
 __global__ void
-warp(cudaTextureObject_t tex, float *const output, curandState_t *const states,
+warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
     const float std, const uint nx, const uint ny, const uint nz, 
     const float window_min, const float window_max,
     const float4 xWarp, const float4 yWarp, const float4 zWarp)
@@ -77,18 +106,53 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const states,
 
     // Read from the 3D texture and postprocess
     const float in = sample_affine(tex, output, x, y, z, xWarp, yWarp, zWarp);
-    output[idx] =  postprocess(in, states + idx, std, window_min, window_max);
+    output[idx] =  postprocess(in, rands + idx, std, window_min, window_max);
 }
 
 /* Initialize an RNG for each thread. This uses a different seed for each
  * generator. This is much faster than using separate sequences with the same
  * seed, but we are not guaranteed independence between generators. */
-__global__ void initRand(const int seed, curandState_t *const states,
+__global__ void initRand(const int seed, curandState_t *const rands,
     const uint nx, const uint ny, const uint nz) {
     CUDA_SET_DIMS // See warp()
-    curand_init(seed + idx, 0, 0, states + idx);
+    curand_init(seed + idx, 0, 0, rands + idx);
 }
 
+/* Call cudaFree, then set to NULL */
+static void cudaFreeAndNull(void **ptr) {
+    if (*ptr == NULL) return;
+    cudaFree(*ptr);
+    *ptr = NULL;
+}
+
+/* Like cudaFreeAndNull, for but CudaArrays */
+static void cudaFreeArrayAndNull(cudaArray **ptr) {
+    if (*ptr == NULL) return;
+    cudaFreeArray(*ptr);
+    *ptr = NULL;
+}
+
+/* Verify the state index, and retrieve the state. Return NULL if invalid */
+static struct State *get_state(const char *tag, const int idx) {
+    if (idx < 0 || idx > NUM_STATES) {
+        fprintf(stderr, "%s: Invalid state idx %d \n", tag, idx);
+        return NULL;
+    }
+
+    return states + idx;
+}
+
+/* Compute the number of voxels in an array */
+static size_t get_num_voxels(const int nx, const int ny, const int nz) {
+        return ((size_t) nx) * ((size_t) ny) * ((size_t) nz);
+}
+
+
+/* Compute the size of an array, in the internal represenataion */
+static size_t get_size(const int nx, const int ny, const int nz) {
+        return get_num_voxels(nx, ny, nz) * sizeof(float);
+}
+ 
 /* Warp an image in-place.  
 * Parameters:
 *  input - an array of nxi * nyi * nzi floats, strided in (x,y,z) order
@@ -102,10 +166,68 @@ __global__ void initRand(const int seed, curandState_t *const states,
 *  window_min - the minimum value for the window. Use -INFINITY to do nothing.
 *  window_max - the maximum value for the window. Use INFINITY to do nothing.
 *
+* Note: This will overwrite any results in states[0].
+*
 * Returns 0 on success, nonzero otherwise. */
 int cuda_image_warp(const float *const input, 
     const int nxi, const int nyi, const int nzi, 
     float *const output,
+    const int nxo, const int nyo, const int nzo, 
+    const int filter_mode, const float *const params, const float std,
+    const float window_min, const float window_max) {
+
+        const int state_idx = 0;
+
+        return cuda_image_warp_start(state_idx, input, nxi, nyi, nzi, nxo, 
+                nyo, nzo, filter_mode, params, std, window_min, window_max) ||
+                cuda_image_warp_finish(state_idx, output);
+                
+}
+
+/* Finish computation and copy the result to host. Retrieves the data in 
+ * states[state_idx] */
+int cuda_image_warp_finish(const int state_idx, float *const output) {
+
+    struct State *state;
+    if ((state = get_state("cuda_image_warp_finish", state_idx)) == NULL)
+        return -1;
+
+    // --- Copy the output data to the host
+    gpuErrchk(cudaMemcpy(output, state->output, state->output_size, 
+        cudaMemcpyDeviceToHost));
+
+    // Destroy the state
+    return cleanup_state(state_idx);
+}
+
+/* Free all memory associated with states[state_idx]. */
+static int cleanup_state(const int state_idx) {
+
+    struct State *const state = states + state_idx;
+
+    // Free the input memory
+    cudaFreeArrayAndNull(&state->input);
+    gpuErrchk(cudaPeekAtLastError());
+
+    // Free the output memory
+    cudaFreeAndNull(&state->output);
+    gpuErrchk(cudaPeekAtLastError());
+
+    // Destroy the texture object
+    if (state->have_tex) {
+        cudaDestroyTextureObject(state->tex);
+        gpuErrchk(cudaPeekAtLastError());
+        state->have_tex = 0;
+    }
+
+    return 0;
+}
+
+
+/* The meat of cuda_image_warp_start, wrapped to handle errors. */
+static int _cuda_image_warp_start(struct State *const state, 
+    const float *const input,
+    const int nxi, const int nyi, const int nzi, 
     const int nxo, const int nyo, const int nzo, 
     const int filter_mode, const float *const params, const float std,
     const float window_min, const float window_max) {
@@ -115,70 +237,33 @@ int cuda_image_warp(const float *const input,
     const float4 yWarp = {params[4], params[5], params[6], params[7]};
     const float4 zWarp = {params[8], params[9], params[10], params[11]}; 
 
-    // Intermediates
-    float *d_output = NULL;
-    curandState_t *d_states = NULL;
-    cudaArray *d_input = NULL;
-
-#define gpuAssert(code, file, line) { \
-if (code != cudaSuccess) { \
-    fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), \
-	    file, line); \
-    if (d_output != NULL) \
-	cudaFree(d_output); \
-    if (d_states != NULL) \
-	cudaFree(d_states); \
-    if (d_input != NULL) \
-	cudaFreeArray(d_input); \
-    return -1; \
-}  \
-} \
-
-#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-
-#define CLEANUP { \
-if (d_output != NULL) { \
-    cudaFree(d_output); \
-    gpuErrchk(cudaPeekAtLastError()); \
-} \
-if (d_states != NULL) { \
-    cudaFree(d_states); \
-    gpuErrchk(cudaPeekAtLastError()); \
-} \
-if (d_input != NULL) { \
-    cudaFreeArray(d_input); \
-    gpuErrchk(cudaPeekAtLastError()); \
-} \
-} 
-
     // --- Allocate device memory for output
-    const size_t num_voxels = nxo * nyo * nzo;
-    const size_t out_size = num_voxels * sizeof(float);
-    gpuErrchk(cudaMalloc((void**) &d_output, out_size));
-    gpuErrchk(cudaMalloc((void**) &d_states, 
-	num_voxels * sizeof(curandState_t)));
+    const size_t num_voxels = get_num_voxels(nxo, nyo, nzo);
+    state->output_size = get_size(nxo, nyo, nzo);
+    gpuErrchk(cudaMalloc((void**) &state->output, state->output_size));
+    gpuErrchk(cudaMalloc((void**) &state->rands, 
+        num_voxels * sizeof(curandState_t)));
 
     // --- Create 3D array
     const cudaExtent inVolumeSize = make_cudaExtent(nxi, nyi, nzi);
 
     cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
-    gpuErrchk(cudaMalloc3DArray(&d_input, &channelDesc, inVolumeSize));
+    gpuErrchk(cudaMalloc3DArray(&state->input, &channelDesc, inVolumeSize));
 
     // --- Copy the input data to a 3D array (host to device)
     cudaMemcpy3DParms copyParams = {0};
     copyParams.srcPtr   = make_cudaPitchedPtr((void *) input,
 	nxi * sizeof(float), nxi, nyi);
-    copyParams.dstArray = d_input;
+    copyParams.dstArray = state->input;
     copyParams.extent   = inVolumeSize;
     copyParams.kind     = cudaMemcpyHostToDevice;
     gpuErrchk(cudaMemcpy3D(&copyParams));
 
     // --- Create the texture object
-    cudaTextureObject_t tex;
-    cudaResourceDesc    texRes;
+    cudaResourceDesc texRes;
     memset(&texRes, 0, sizeof(cudaResourceDesc));
     texRes.resType = cudaResourceTypeArray;
-    texRes.res.array.array  = d_input;
+    texRes.res.array.array  = state->input;
     cudaTextureDesc texDescr;
     memset(&texDescr, 0, sizeof(cudaTextureDesc));
     texDescr.normalizedCoords = false;
@@ -197,10 +282,10 @@ if (d_input != NULL) { \
 	    break;
 	default:
 	    fprintf(stderr, "Unrecognized filter_mode: %d \n", filter_mode);
-            CLEANUP
 	    return -1;
     }
-    gpuErrchk(cudaCreateTextureObject(&tex, &texRes, &texDescr, NULL));
+    gpuErrchk(cudaCreateTextureObject(&state->tex, &texRes, &texDescr, NULL));
+    state->have_tex = 1;
 
     // Configure the block and grid sizes
     const dim3 blockSize(16, 16, 1);
@@ -215,24 +300,46 @@ if (d_input != NULL) { \
 	const time_t seed = clock();
 
 	// Initialize one RNG per thread
-	initRand<<<gridSize, blockSize>>>(seed, d_states, nxo, nyo, nzo);
+	initRand<<<gridSize, blockSize>>>(seed, state->rands, nxo, nyo, nzo);
     }
 
     // Perform image warping and augmentation
-    warp<<<gridSize, blockSize>>>(tex, d_output, d_states, std, nxo, nyo, nzo, 
-	window_min, window_max, xWarp, yWarp, zWarp);
+    warp<<<gridSize, blockSize>>>(state->tex, (float *) state->output, 
+        state->rands, std, nxo, nyo, nzo, window_min, window_max, xWarp, yWarp,
+        zWarp);
     gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
 
-    // --- Copy the output data to the host
-    gpuErrchk(cudaMemcpy(output,d_output,out_size,cudaMemcpyDeviceToHost));
-
-    // Destroy the texture object
-    cudaDestroyTextureObject(tex);  
-
-    CLEANUP
     return 0;
+}
 
-#undef CLEANUP
+/* Enqueue an image warping. See cuda_image_warp for parameters. Writes the
+ * results to states[state_idx]. */
+int cuda_image_warp_start(const int state_idx, const float *const input,
+    const int nxi, const int nyi, const int nzi, 
+    const int nxo, const int nyo, const int nzo, 
+    const int filter_mode, const float *const params, const float std,
+    const float window_min, const float window_max) {
+
+    int ret;
+
+    // Verify the state index
+    struct State *state;
+    if ((state = get_state("cuda_image_warp_start", state_idx)) == NULL)
+        return -1;
+
+    // Initialize the intermediate state
+    state->output = NULL;
+    state->rands = NULL;
+    state->input = NULL;
+    state->have_tex = 0;
+
+    // Handle errors
+    if ((ret = _cuda_image_warp_start(state, input, nxi, nyi, nzi, nxo, 
+            nyo, nzo, filter_mode, params, std, window_min, 
+        window_max)) != 0) {
+        cleanup_state(state_idx);
+    }
+
+    return ret;
 }
 
