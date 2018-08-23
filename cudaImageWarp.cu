@@ -77,7 +77,7 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
     CUDA_SET_DIMS
 
     // Perform occlusion, exit early for occluded voxels
-    if (z > occZmin && z < occZmax) {
+    if (z >= occZmin && z <= occZmax) {
         output[idx] = 0;
         return;
     }
