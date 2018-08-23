@@ -75,9 +75,13 @@ Arguments:
                 input. This can be used to crop or pad an image.
 	std -- The standard derviation of white Gaussian noise added to the
 		output.
+        winMax -- The maximum intensity value to be used in the window.
+        winMin -- The minimum intensity value to be used in the window.
+        occZmin -- The minimum z-value to be occluded.
+        occZmax -- The maximum z-value to be occluded.
 """
 def warp(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf')):
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1):
 
         # Handle inputs
         im, dtype, A, shape, interpCode = __handle_inputs(im, A, shape, interp)
@@ -99,7 +103,9 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
                 A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
 		ctypes.c_float(std),
 		ctypes.c_float(winMin),
-		ctypes.c_float(winMax)
+		ctypes.c_float(winMax),
+		ctypes.c_int(occZmin),
+		ctypes.c_int(occZmax)
         )
 
         if ret != 0:
@@ -113,7 +119,7 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
 Push an image onto the queue. See warp() for parameters.
 """
 def push(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf')):
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1):
 
         # Handle inputs
         im, dtype, A, shape, interpCode = __handle_inputs(im, A, shape, interp)
@@ -131,7 +137,9 @@ def push(im, A, interp='linear', shape=None, std=0.0,
                 A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
 		ctypes.c_float(std),
 		ctypes.c_float(winMin),
-		ctypes.c_float(winMax)
+		ctypes.c_float(winMax),
+		ctypes.c_int(occZmin),
+		ctypes.c_int(occZmax)
         )
 
         if ret != 0:

@@ -9,7 +9,8 @@ int cuda_image_warp_push(const float *const input,
     const int nxi, const int nyi, const int nzi, 
     const int nxo, const int nyo, const int nzo, 
     const int filter_mode, const float *const params, const float std,
-    const float window_min, const float window_max);
+    const float window_min, const float window_max,
+    const int occZmin, const int occZmax);
 
 int cuda_image_warp_pop(float *const output);
 
@@ -18,7 +19,8 @@ int cuda_image_warp(const float *const input,
     float *const output,
     const int nxo, const int nyo, const int nzo, 
     const int filter_mode, const float *const params, const float std,
-    const float window_min, const float window_max);
+    const float window_min, const float window_max,
+    const int occZmin, const int occZmax);
 
 #ifdef __cplusplus
 }

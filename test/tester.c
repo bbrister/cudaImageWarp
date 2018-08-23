@@ -18,7 +18,8 @@ int main(int argc, char *argv[]) {
     const float params[] = {1.0, 0.0, 0.0, 0.0,
                             0.0, 0.5, 0.0, 0.0,
                             0.0, 0.0, 2.0, 0.0};
-
+    const int zMin = 100;
+    const int zMax = zMin + 50;
     const int num_args = 1;
 
     // Get the inputs
@@ -46,10 +47,10 @@ int main(int argc, char *argv[]) {
     // Initialize the output image
     init_im_with_dims(&out, in.nx, in.ny, in.nz, in.nc);
 
-    // Warp the image
+    // Warp and crop the image
     if (cuda_image_warp(in.data, in.nx, in.ny, in.nz, 
         out.data, out.nx, out.ny, out.nz, 1, params, 100.0f, -INFINITY, 
-	INFINITY)) {
+	INFINITY, zMin, zMax)) {
         fputs("Error warping image", stderr);
         return -1;
     }

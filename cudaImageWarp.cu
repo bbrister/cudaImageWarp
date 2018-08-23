@@ -33,19 +33,6 @@ __device__ float affine_warp(const uint x, const uint y, const uint z,
     return x * warp.x + y * warp.y + z * warp.z + warp.w;
 }
 
-/* Sample from a texture after affine warping */
-__device__ float sample_affine(cudaTextureObject_t tex,
-    float *const output, 
-    const uint x, const uint y, const uint z,
-    const float4 xWarp, const float4 yWarp, const float4 zWarp) {
-
-    const float xs = affine_warp(x, y, z, xWarp);
-    const float ys = affine_warp(x, y, z, yWarp);
-    const float zs = affine_warp(x, y, z, zWarp);
-
-    return tex3D<float>(tex, xs, ys, zs);
-}
-
 /* Device function to perform image post-processing */
 __device__ float postprocess(const float in, curandState_t *state, 
 	const float std, const float window_min, const float window_max) {
@@ -70,7 +57,8 @@ __global__ void
 warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
     const float std, const uint nx, const uint ny, const uint nz, 
     const float window_min, const float window_max,
-    const float4 xWarp, const float4 yWarp, const float4 zWarp)
+    const float4 xWarp, const float4 yWarp, const float4 zWarp, 
+    const int occZmin, const int occZmax)
 {
 
 #define CUDA_SET_DIMS \
@@ -88,9 +76,22 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
 
     CUDA_SET_DIMS
 
-    // Read from the 3D texture and postprocess
-    const float in = sample_affine(tex, output, x, y, z, xWarp, yWarp, zWarp);
-    output[idx] =  postprocess(in, rands + idx, std, window_min, window_max);
+    // Perform occlusion, exit early for occluded voxels
+    if (z > occZmin && z < occZmax) {
+        output[idx] = 0;
+        return;
+    }
+
+    // Compute the affine sampling coordinates
+    const float xs = affine_warp(x, y, z, xWarp);
+    const float ys = affine_warp(x, y, z, yWarp);
+    const float zs = affine_warp(x, y, z, zWarp);
+
+    // Sample from the 3D texture
+    const float in = tex3D<float>(tex, xs, ys, zs);
+
+    // Postprocess
+    output[idx] = postprocess(in, rands + idx, std, window_min, window_max);
 }
 
 /* Initialize an RNG for each thread. This uses a different seed for each
@@ -145,7 +146,8 @@ private:
         const int nxi, const int nyi, const int nzi, 
         const int nxo, const int nyo, const int nzo, 
         const int filter_mode, const float *const params, const float std,
-        const float window_min, const float window_max) {
+        const float window_min, const float window_max,
+        const int occZmin, const int occZmax) {
 
         // Convert the input to CUDA datatypes
         const float4 xWarp = {params[0], params[1], params[2], params[3]};
@@ -221,7 +223,7 @@ private:
         // Perform image warping and augmentation
         warp<<<gridSize, blockSize>>>(tex, (float *) output, 
             rands, std, nxo, nyo, nzo, window_min, window_max, xWarp, 
-            yWarp, zWarp);
+            yWarp, zWarp, occZmin, occZmax);
         gpuErrchk(cudaPeekAtLastError());
 
         return 0;
@@ -245,12 +247,13 @@ public:
         const int nxi, const int nyi, const int nzi, 
         const int nxo, const int nyo, const int nzo, 
         const int filter_mode, const float *const params, const float std,
-        const float window_min, const float window_max) {
+        const float window_min, const float window_max,
+        const int occZmin, const int occZmax) {
 
         int ret;
 
         if ((ret = _warp_start(input, nxi, nyi, nzi, nxo, nyo, nzo, filter_mode,
-                params, std, window_min, window_max)) != 0) {
+                params, std, window_min, window_max, occZmin, occZmax)) != 0) {
             cleanup();
         }
 
@@ -298,6 +301,8 @@ static size_t get_size(const int nx, const int ny, const int nz) {
 *	std <= 0.
 *  window_min - the minimum value for the window. Use -INFINITY to do nothing.
 *  window_max - the maximum value for the window. Use INFINITY to do nothing.
+*  occZmin - the minimum z-coordinate to be occluded
+*  occZmax - the maximimum z-coordinate to be occluded
 *
 *  Note: This does not interfere with the queue.
 *
@@ -307,13 +312,14 @@ int cuda_image_warp(const float *const input,
     float *const output,
     const int nxo, const int nyo, const int nzo, 
     const int filter_mode, const float *const params, const float std,
-    const float window_min, const float window_max) {
+    const float window_min, const float window_max,
+    const int occZmin, const int occZmax) {
 
     State state;
 
     return state.warp_start(input, nxi, nyi, nzi, nxo, 
-            nyo, nzo, filter_mode, params, std, window_min, window_max) ||
-            state.warp_finish(output);
+            nyo, nzo, filter_mode, params, std, window_min, window_max, occZmin,
+            occZmax) || state.warp_finish(output);
                 
 }
 
@@ -337,7 +343,8 @@ int cuda_image_warp_push(const float *const input,
     const int nxi, const int nyi, const int nzi, 
     const int nxo, const int nyo, const int nzo, 
     const int filter_mode, const float *const params, const float std,
-    const float window_min, const float window_max) {
+    const float window_min, const float window_max,
+    const int occZmin, const int occZmax) {
 
     int ret;
 
@@ -346,7 +353,8 @@ int cuda_image_warp_push(const float *const input,
 
     // Start the computation
     if ((ret = state.warp_start(input, nxi, nyi, nzi, nxo, nyo, 
-        nzo, filter_mode, params, std, window_min, window_max)))
+        nzo, filter_mode, params, std, window_min, window_max, occZmin, 
+        occZmax)))
         return ret;
         
     // Add the state to the queue
