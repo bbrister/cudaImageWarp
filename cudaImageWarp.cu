@@ -24,11 +24,8 @@ if (code != cudaSuccess) { \
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 
-/* Types */
-typedef unsigned int uint;
-
 /* CUDA device function which does the affine warping */
-__device__ float affine_warp(const uint x, const uint y, const uint z, 
+__device__ float affine_warp(const int x, const int y, const int z, 
     const float4 warp) {
     return x * warp.x + y * warp.y + z * warp.z + warp.w;
 }
@@ -55,24 +52,24 @@ __device__ float postprocess(const float in, curandState_t *state,
 /* Image warping kernel */
 __global__ void
 warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
-    const float std, const uint nx, const uint ny, const uint nz, 
+    const float std, const int nx, const int ny, const int nz, 
     const float window_min, const float window_max,
     const float4 xWarp, const float4 yWarp, const float4 zWarp, 
     const int occZmin, const int occZmax)
 {
 
 #define CUDA_SET_DIMS \
-    const uint x = blockIdx.x * blockDim.x + threadIdx.x; \
-    const uint y = blockIdx.y * blockDim.y + threadIdx.y; \
-    const uint z = blockIdx.z * blockDim.z + threadIdx.z; \
+    const int x = blockIdx.x * blockDim.x + threadIdx.x; \
+    const int y = blockIdx.y * blockDim.y + threadIdx.y; \
+    const int z = blockIdx.z * blockDim.z + threadIdx.z; \
     \
     /* Check boundaries */ \
     if (x >= nx || y >= ny || z >= nz) \
 	return; \
     \
-    const uint y_stride = nx; \
-    const uint z_stride = nx * ny; \
-    const uint idx = z * z_stride + y * y_stride + x; 
+    const int y_stride = nx; \
+    const int z_stride = nx * ny; \
+    const int idx = z * z_stride + y * y_stride + x; 
 
     CUDA_SET_DIMS
 
@@ -98,7 +95,7 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
  * generator. This is much faster than using separate sequences with the same
  * seed, but we are not guaranteed independence between generators. */
 __global__ void initRand(const int seed, curandState_t *const rands,
-    const uint nx, const uint ny, const uint nz) {
+    const int nx, const int ny, const int nz) {
     CUDA_SET_DIMS // See warp()
     curand_init(seed + idx, 0, 0, rands + idx);
 }
