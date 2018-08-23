@@ -104,8 +104,8 @@ __global__ void initRand(const int seed, curandState_t *const rands,
 }
 
 /* Function prototypes */
-static void cudaFreeAndNull(void **ptr);
-static void cudaFreeArrayAndNull(cudaArray **ptr);
+static void cudaFreeAndNull(void *&ptr);
+static void cudaFreeArrayAndNull(cudaArray *&ptr);
 static size_t get_num_voxels(const int nx, const int ny, const int nz);
 static size_t get_size(const int nx, const int ny, const int nz);
 
@@ -124,12 +124,18 @@ private:
     int cleanup(void) {
         
         // Free the input memory
-        cudaFreeArrayAndNull(&input);
+        cudaFreeArrayAndNull(input);
         gpuErrchk(cudaPeekAtLastError());
 
         // Free the output memory
-        cudaFreeAndNull(&output);
+        cudaFreeAndNull(output);
         gpuErrchk(cudaPeekAtLastError());
+
+        // Free random number generators
+        void *rands_v = static_cast<void *>(rands);
+        cudaFreeAndNull(rands_v);
+        gpuErrchk(cudaPeekAtLastError());
+        rands = NULL;
 
         // Destroy the texture object
         if (have_tex) {
@@ -265,17 +271,17 @@ public:
 std::queue<State> q;
 
 /* Call cudaFree, then set to NULL */
-static void cudaFreeAndNull(void **ptr) {
-    if (*ptr == NULL) return;
-    cudaFree(*ptr);
-    *ptr = NULL;
+static void cudaFreeAndNull(void *&ptr) {
+    if (ptr == NULL) return;
+    cudaFree(ptr);
+    ptr = NULL;
 }
 
 /* Like cudaFreeAndNull, for but CudaArrays */
-static void cudaFreeArrayAndNull(cudaArray **ptr) {
-    if (*ptr == NULL) return;
-    cudaFreeArray(*ptr);
-    *ptr = NULL;
+static void cudaFreeArrayAndNull(cudaArray *&ptr) {
+    if (ptr == NULL) return;
+    cudaFreeArray(ptr);
+    ptr = NULL; 
 }
 
 /* Compute the number of voxels in an array */
