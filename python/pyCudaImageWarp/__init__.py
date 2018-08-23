@@ -8,6 +8,14 @@ Python module initializer for CUDA image warper.
 import os
 import ctypes
 
+# Initialize a queue for recording inputs
+try:
+    import queue
+    q = queue.queue()
+except:
+    import Queue
+    q = Queue.Queue()
+
 # Load the library
 libName = 'libcudaImageWarp.so'
 scriptDir = os.path.abspath(os.path.dirname(__file__))
@@ -27,21 +35,46 @@ if dll is None:
    raise OSError('Cannot find library ' + libName + '. Searched the ' +
         'following paths: ' + '\n'.join(searched))
 
-# Extract the warping function and set up its signature
+# Extract the single-image warping function
 warpfun = dll.cuda_image_warp
 warpfun.argtypes = [
-        ctypes.POINTER(ctypes.c_float), 
-        ctypes.c_int, 
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_float), 
-        ctypes.c_int, 
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.c_float,
-        ctypes.c_float,
-        ctypes.c_float
-        ]
+    ctypes.POINTER(ctypes.c_float), 
+    ctypes.c_int, 
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.c_float), 
+    ctypes.c_int, 
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_float,
+    ctypes.c_float,
+    ctypes.c_float
+    ]
 warpfun.restype = ctypes.c_int
+
+# Extract the warp push function
+pushfun = dll.cuda_image_warp_push
+pushfun.argtypes = [
+    ctypes.POINTER(ctypes.c_float), 
+    ctypes.c_int, 
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int, 
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_float,
+    ctypes.c_float,
+    ctypes.c_float
+    ]
+pushfun.restype = ctypes.c_int
+
+# Extract the warping end function
+popfun = dll.cuda_image_warp_pop
+popfun.argTypes = [
+    ctypes.POINTER(ctypes.c_float)
+    ]
+popfun.restype = ctypes.c_int

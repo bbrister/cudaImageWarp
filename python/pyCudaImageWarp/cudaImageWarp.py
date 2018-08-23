@@ -8,7 +8,61 @@ import numpy as np
 import ctypes
 import pyCudaImageWarp
 
+""" 
+Verify that the inputs are correct. Returns default parameter values
 """
+def __handle_inputs(im, A, shape, interp):
+
+	# Default to the same shape as im
+	if shape is None:
+	    shape = im.shape
+
+        # Check the dimensions
+        ndim = 3;
+	Ashape = (ndim, ndim + 1)
+	if len(im.shape) != ndim:
+		raise ValueError("im has shape %s, expected %d dimensions" % \
+			(im.shape, ndim))
+	if len(shape) != ndim:
+		raise ValueError("received output shape %s, expected %d "
+			"dimensions" % (shape, ndim))
+	if not np.equal(A.shape, Ashape).all():
+		raise ValueError("Expected A shape %s, received %s" % \
+			(Ashape, A.shape))
+
+        # Convert the interpolation string to and integer code
+        interpMap = {
+                'nearest' : 0,
+                'linear' : 1
+        }
+        interpCode = interpMap[interp]
+
+        # Convert the inputs to C float arrays
+	dtype = im.dtype
+        im, A = __convert_inputs(im, A)
+
+        return im, dtype, A, shape, interpCode
+
+"""
+Convert the inputs into the required formats for the C library.
+"""
+def __convert_inputs(im, A):
+        im = np.require(im, dtype='float32', requirements=['F', 'A'])
+        A = np.require(A, dtype='float32', requirements=['C', 'A'])
+        return im, A
+
+"""
+Create a C float array for the output
+"""
+def __create_output(shape):
+        out = np.zeros(shape, dtype='float32')
+        out = np.require(out, dtype='float32', 
+                requirements=['F', 'A', 'W', 'O'])
+        return out
+
+"""
+Warp a since image. Returns the result in the same datatype as the input.
+
 Arguments:
         im -- An image volume, i.e. a 3D numpy array. Indexed in Fortran order,
 		e.g. im[x, y, z].
@@ -22,43 +76,16 @@ Arguments:
 	std -- The standard derviation of white Gaussian noise added to the
 		output.
 """
-def cudaImageWarp(im, A, interp='linear', shape=None, std=0.0, 
+def warp(im, A, interp='linear', shape=None, std=0.0, 
 	winMin=-float('inf'), winMax=float('inf')):
 
-	# Default to the same shape as im
-	if shape is None:
-	    shape = im.shape
+        # Handle inputs
+        im, dtype, A, shape, interpCode = __handle_inputs(im, A, shape, interp)
 
-	# Verify inputs
-	ndim = 3;
-	Ashape = (ndim, ndim + 1)
-	if len(im.shape) != ndim:
-		raise ValueError("im has shape %s, expected %d dimensions" % \
-			(im.shape, ndim))
-	if len(shape) != ndim:
-		raise ValueError("received output shape %s, expected %d "
-			"dimensions" % (shape, ndim))
-	if not np.equal(A.shape, Ashape).all():
-		raise ValueError("Expected A shape %s, received %s" % \
-			(Ashape, A.shape))
+        # Create the output
+        out = __create_output(shape)
 
-        # Mapping from interpolation strings to codes
-        interpMap = {
-                'nearest' : 0,
-                'linear' : 1
-        }
-
-        # Convert the inputs to C float arrays
-	dtype = im.dtype
-        im = np.require(im, dtype='float32', requirements=['F', 'A'])
-        A = np.require(A, dtype='float32', requirements=['C', 'A'])
-
-        # Create a C float array for the output
-        out = np.zeros(shape, dtype='float32')
-        out = np.require(out, dtype='float32', 
-                requirements=['F', 'A', 'W', 'O'])
-
-        # Warp the image
+        # Warp
         ret = pyCudaImageWarp.warpfun(
                 im.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                 ctypes.c_int(im.shape[0]), 
@@ -68,7 +95,7 @@ def cudaImageWarp(im, A, interp='linear', shape=None, std=0.0,
 		ctypes.c_int(shape[0]),
 		ctypes.c_int(shape[1]),
 		ctypes.c_int(shape[2]),
-                ctypes.c_int(interpMap[interp]),
+                ctypes.c_int(interpCode),
                 A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
 		ctypes.c_float(std),
 		ctypes.c_float(winMin),
@@ -78,5 +105,63 @@ def cudaImageWarp(im, A, interp='linear', shape=None, std=0.0,
         if ret != 0:
                 raise ValueError(ret)
 
-        # Convert the output back to the original type
+        # Convert data type
         return out.astype(dtype)
+
+
+"""
+Push an image onto the queue. See warp() for parameters.
+"""
+def push(im, A, interp='linear', shape=None, std=0.0, 
+	winMin=-float('inf'), winMax=float('inf')):
+
+        # Handle inputs
+        im, dtype, A, shape, interpCode = __handle_inputs(im, A, shape, interp)
+
+        # Enqueue the image warping
+        ret = pyCudaImageWarp.pushfun(
+                im.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+                ctypes.c_int(im.shape[0]), 
+                ctypes.c_int(im.shape[1]), 
+                ctypes.c_int(im.shape[2]), 
+		ctypes.c_int(shape[0]),
+		ctypes.c_int(shape[1]),
+		ctypes.c_int(shape[2]),
+                ctypes.c_int(interpCode),
+                A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+		ctypes.c_float(std),
+		ctypes.c_float(winMin),
+		ctypes.c_float(winMax)
+        )
+
+        if ret != 0:
+                raise ValueError(ret)
+
+        # Push the inputs onto the queue
+        pyCudaImageWarp.q.put({
+                'shape': shape,
+                'dtype': dtype
+        })
+
+""" 
+Finish processing the top image on the queue, returning the result.
+""" 
+def pop():
+
+        # Retrieve the inputs
+        inputs = pyCudaImageWarp.q.get_nowait()
+        
+        # Create the output array
+        out = __create_output(inputs['shape'])
+
+        # Get the result
+        ret = pyCudaImageWarp.popfun(
+                out.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        )
+                
+        
+        if ret != 0:
+                raise ValueError(ret)
+
+        # Return and convert data type
+        return out.astype(inputs['dtype'])
