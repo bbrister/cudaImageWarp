@@ -8,6 +8,6 @@ This package can quickly warp images using C or python. The build system require
 
 To install the python package, do 
         cd python
-        pip install .
+        pip install -e .
 
 For usage examples, see tester.c and test.py in the 'test' subdirectory.
