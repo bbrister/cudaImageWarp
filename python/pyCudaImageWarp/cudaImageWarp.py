@@ -8,10 +8,10 @@ import numpy as np
 import ctypes
 import pyCudaImageWarp
 
-""" 
-Verify that the inputs are correct. Returns default parameter values
 """
-def __handle_inputs(im, A, shape, interp):
+Verify that the inputs are correct. Returns default parameter values.
+"""
+def __check_inputs(im, A, shape):
 
 	# Default to the same shape as im
 	if shape is None:
@@ -30,6 +30,13 @@ def __handle_inputs(im, A, shape, interp):
 		raise ValueError("Expected A shape %s, received %s" % \
 			(Ashape, A.shape))
 
+        return shape
+
+""" 
+Convert the inputs into the required formats for the C library.
+"""
+def __convert_inputs(im, A, interp):
+
         # Convert the interpolation string to and integer code
         interpMap = {
                 'nearest' : 0,
@@ -39,17 +46,10 @@ def __handle_inputs(im, A, shape, interp):
 
         # Convert the inputs to C float arrays
 	dtype = im.dtype
-        im, A = __convert_inputs(im, A)
-
-        return im, dtype, A, shape, interpCode
-
-"""
-Convert the inputs into the required formats for the C library.
-"""
-def __convert_inputs(im, A):
         im = np.require(im, dtype='float32', requirements=['F', 'A'])
         A = np.require(A, dtype='float32', requirements=['C', 'A'])
-        return im, A
+
+        return im, dtype, A, interpCode
 
 """
 Create a C float array for the output
@@ -59,6 +59,14 @@ def __create_output(shape):
         out = np.require(out, dtype='float32', 
                 requirements=['F', 'A', 'W', 'O'])
         return out
+
+"""
+Shortcut to take care of inputs.
+"""
+def __handle_inputs(im, A, shape, interp):
+        shape = __check_inputs(im, A, shape)
+        im, dtype, A, interpCode = __convert_inputs(im, A, interp)
+        return im, dtype, A, shape, interpCode
 
 """
 Warp a since image. Returns the result in the same datatype as the input.
