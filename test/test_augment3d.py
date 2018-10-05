@@ -48,4 +48,6 @@ nib.save(nib.Nifti1Image(window, im.affine, header=im.header), 'window.nii.gz')
 occlude = augment3d.cuda_affine_augment3d([data], occludeProb=1.0)[0][0]
 nib.save(nib.Nifti1Image(occlude, im.affine, header=im.header), 'occlude.nii.gz')
 
-
+# Test the Scipy backup implementation
+cpu_rotate = augment3d.cuda_affine_augment3d([data], rotMax=(90, 90, 90), api='scipy')[0][0]
+nib.save(nib.Nifti1Image(rotate, im.affine, header=im.header), 'scipy_rotate.nii.gz')
