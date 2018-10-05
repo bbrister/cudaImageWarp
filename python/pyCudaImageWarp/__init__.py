@@ -26,10 +26,12 @@ dll = None
 searched = []
 for prefix in prefixes:
     searchName = os.path.join(prefix, libName)
-    try:
-        dll = ctypes.cdll.LoadLibrary(searchName)
-    except OSError:
+    if not os.path.exists(searchName):
         searched.append(searchName)
+        continue
+
+    dll = ctypes.cdll.LoadLibrary(searchName)
+    break
 
 if dll is None:
    raise OSError('Cannot find library ' + libName + '. Searched the ' +
