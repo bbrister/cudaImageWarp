@@ -11,6 +11,9 @@
 
 #include "cudaImageWarp.h" // Need this to get C linkage on exported functions
 
+/* Keep track of the most recently used device */
+int current_device = 0;
+
 /* Useful macros */
 #define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide positive integers and ceil
 
@@ -156,6 +159,11 @@ private:
         const float4 xWarp = {params[0], params[1], params[2], params[3]};
         const float4 yWarp = {params[4], params[5], params[6], params[7]};
         const float4 zWarp = {params[8], params[9], params[10], params[11]}; 
+
+	// Get the number of devices, and choose the next one for use
+	int num_devices;
+	gpuErrchk(cudaGetDeviceCount(&num_devices));
+	cudaSetDevice(++current_device % num_devices);
 
         // --- Allocate device memory for output
         const size_t num_voxels = get_num_voxels(nxo, nyo, nzo);
