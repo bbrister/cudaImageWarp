@@ -155,6 +155,9 @@ private:
         const float window_min, const float window_max,
         const int occZmin, const int occZmax) {
 
+	// Settings
+	const int with_rands = std > 0.0f;
+
         // Convert the input to CUDA datatypes
         const float4 xWarp = {params[0], params[1], params[2], params[3]};
         const float4 yWarp = {params[4], params[5], params[6], params[7]};
@@ -169,8 +172,10 @@ private:
         const size_t num_voxels = get_num_voxels(nxo, nyo, nzo);
         output_size = get_size(nxo, nyo, nzo);
         gpuErrchk(cudaMalloc((void**) &output, output_size));
-        gpuErrchk(cudaMalloc((void**) &rands, 
-            num_voxels * sizeof(curandState_t)));
+	if (with_rands) {
+		gpuErrchk(cudaMalloc((void**) &rands, 
+		    num_voxels * sizeof(curandState_t)));
+	}
 
         // --- Create 3D array
         const cudaExtent inVolumeSize = make_cudaExtent(nxi, nyi, nzi);
@@ -223,7 +228,7 @@ private:
         // Initialize the random number generators
         //TODO we could keep track of the last image size globally, only
         // calling this kernel if that number changes
-        if (std > 0.0f) { 
+        if (with_rands) { 
             // Get the random seed from the time
             const time_t seed = clock();
 
