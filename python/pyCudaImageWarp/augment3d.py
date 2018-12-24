@@ -5,12 +5,13 @@ import scipy.ndimage as nd
 from pyCudaImageWarp import cudaImageWarp
 
 """
-    Adjust the translation component of an affine transform so that it fixes
-    the given point. Preserves the linear part.
+    Adjust the translation component of an affine transform so that it maps
+    'point' to 'target'. Does not change the linear component.
+
 """
-def fix_point_affine(mat, point):
+def set_point_target_affine(mat, point, target):
     mat = mat.astype(float)
-    mat[0:3, 3] = point - mat[0:3, 0:3].dot(point[np.newaxis].T).T
+    mat[0:3, 3] = target - mat[0:3, 0:3].dot(point[np.newaxis].T).T
     return mat
 
 def jitter_mask(labels, pQuit=0.5, maxIter=1, pKeep=0.5, pJagged=0.5):
@@ -88,8 +89,11 @@ def get_translation_affine(offset):
                 10) translates by at most +-10 voxels in each coordinate.
         otherScale - Gaussian-distributed affine transform. This controls the
                 variance of each parameter.
-	randomCrop - If true, and the output shape differs from the input, crop
-		the input uniformly at random. Otherwise, crop in the center.
+        randomCrop - Choose whether to randomly crop the image. Possible modes:
+            'none' - Do no cropping (default).
+            'all' - All crops are equally likely.
+            'nonzero' - Choose only from crops whose centers have a positive 
+                label. Cannot be used if segList is None.
 	noiseLevel - Decide the amount of noise using this standard deviation.
 	windowMin - A pair of values, from which the lower window threshold is
 		sampled uniformly. By default, this does nothing.
@@ -101,15 +105,16 @@ def get_translation_affine(offset):
         printFun - If provided, use this function to print the parameters.
         oob_image_val - If provided, set out-of-bounds voxels to this value.
         api - The underlying computation platform. Either 'cuda' or 'scipy'.
+        device - The index of the CUDA device, if provided.
 
     All transforms fix the center of the image, except for translation.
 """
 def cuda_affine_augment3d(imList, segList=None, shapeList=None, rand_seed=None,
     init=np.eye(3), rotMax=(0, 0, 0), pReflect=(0, 0, 0), 
-    shearMax=(1,1,1), transMax=(0,0,0), otherScale=0, randomCrop=False, 
+    shearMax=(1,1,1), transMax=(0,0,0), otherScale=0, randomCrop='none', 
     noiseLevel=0, windowMin=None, windowMax=None, 
     occludeProb=0.0, oob_label=0, printFun=None, oob_image_val=None, 
-    api='cuda'):
+    api='cuda', device=None):
 
     # Choose the implementation based on api
     if api == 'cuda':
@@ -158,7 +163,7 @@ def cuda_affine_augment3d(imList, segList=None, shapeList=None, rand_seed=None,
         __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init,
             rotMax, pReflect, shearMax, transMax, otherScale, randomCrop, 
             noiseLevel, windowMin, windowMax, occludeProb, 
-            oob_label, oob_image_val, printFun, pushFun)
+            oob_label, oob_image_val, printFun, pushFun, device)
 
         segShifts.append(shift)
 
@@ -188,7 +193,7 @@ def cuda_affine_augment3d(imList, segList=None, shapeList=None, rand_seed=None,
 def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pReflect,
         shearMax, transMax, otherScale, randomCrop, noiseLevel, 
         windowMin, windowMax, occludeProb, oob_label, oob_image_val, printFun, 
-        pushFun):
+        pushFun, device):
     """
         Start processing an image. Called by cuda_affine_augment3d. Returns the
         cropping coordinates. Pushes im first, then pushes seg if it's not None.
@@ -233,16 +238,37 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
     mat_init = np.identity(4)
     mat_init[0:3, 0:3] = init
 
-    # Random cropping
-    if randomCrop:
-        crop_range = np.maximum(np.array(im.shape[:3]) - np.array(shape[:3]), 0)
-        crop_start = np.random.uniform(high=crop_range)
-    else:
-        crop_start = np.array(zeros(3,))
-    mat_crop = get_translation_affine(crop_start)
+    # Get the center of the output shape
+    shape_center = (np.array(shape[:3]) - 1.0) / 2.0
 
-    # Get the center of the crop, to make sure our other transformations fix it
-    crop_center = crop_start + np.array(shape)[:-1] / 2.0
+    # Compute the input crop center
+    if randomCrop == 'none':
+        crop_center = shape_center
+    elif randomCrop == 'uniform':
+        crop_range = np.maximum(np.array(im.shape[:3]) - np.array(shape[:3]), 0)
+        crop_offset = np.random.uniform(high=crop_range)
+        crop_center = shape_center + crop_offset
+    elif randomCrop == 'nonzero':
+        if seg is None:
+            raise ValueError('Cannot use randomCrop == \'nonzero\' when seg is not provided!')
+        # First pick a class, accounting for label shifting
+        classes = np.unique(seg.flatten())
+        rand_class = np.random.choice(classes[classes > 1])
+
+        # Now pick a center from one of the indices
+        center_idx = np.random.choice(np.nonzero(seg.flatten() == rand_class)[0])
+
+        if printFun is not None:
+            printFun("crop_class: %d" % rand_class)
+
+        """
+        # Pick a center coordinate from the ones with non-zero label, 
+        # accounting for label shifting
+        center_idx = np.random.choice(np.nonzero(seg.flatten() > 1)[0])
+        """
+        crop_center = np.array(np.unravel_index(center_idx, seg.shape))
+    else:
+        raise ValueError('Unrecognized randomCrop: ' + randomCrop)
 
     # Uniform rotation
     rotate_deg = np.random.uniform(low=-np.array(rotMax), high=rotMax)
@@ -287,18 +313,14 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
     # Uniform translation
     translation = np.random.uniform(low=-np.array(transMax), 
             high=transMax)
-    mat_translate = np.identity(4)
-    mat_translate[0:3, 3] = translation
 
-    # Compose all the linear transforms, fix the center
-    mat_linear = fix_point_affine(
+    # Compose all the transforms, fix the center of the crop
+    mat_total = set_point_target_affine(
         mat_rotate.dot( mat_shear.dot( mat_reflect.dot( mat_other.dot( mat_init)
 	))),
-        crop_center 
+        shape_center + translation,
+        crop_center
     )
-
-    # Add translation
-    mat_total = mat_crop.dot( mat_translate.dot( mat_linear))
     warp_affine = mat_total[0:3, :]
 
     # Draw the window thresholds uniformly in the specified range
@@ -333,11 +355,13 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
 		winMin=winMin,
 		winMax=winMax,
 		occZmin=occZmin,
-		occZmax=occZmax
+		occZmax=occZmax,
+                device=device
 	)
 
     # Optionally print the result
     if printFun is not None:
+        printFun("crop_center: [%d, %d, %d]" % (crop_center[0], crop_center[1], crop_center[2]))
         printFun("occZmin: %d occZmax: %d" % (occZmin, occZmax))
         printFun("winZmin: %d winZmax: %d" % (winMin, winMax))
         printFun("rotation: [%d, %d, %d]" % (rotate_deg[0], rotate_deg[1], 
@@ -356,7 +380,8 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
 	interp='nearest',
 	shape=shape[:3], 
 	occZmin=occZmin,
-	occZmax=occZmax
+	occZmax=occZmax,
+        device=device
     )
 
     return

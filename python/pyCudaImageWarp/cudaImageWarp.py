@@ -11,7 +11,15 @@ import pyCudaImageWarp
 """
 Verify that the inputs are correct. Returns default parameter values.
 """
-def __check_inputs(im, A, shape):
+def __check_inputs(im, A, shape, device):
+
+        # Make sure device is positive
+        if device is None:
+            # -1 signals no preference in device
+            device = -1
+        elif device < 0:
+            raise ValueError(
+                    "received device %d, must be non-negative!" % device)
 
 	# Default to the same shape as im
 	if shape is None:
@@ -30,7 +38,7 @@ def __check_inputs(im, A, shape):
 		raise ValueError("Expected A shape %s, received %s" % \
 			(Ashape, A.shape))
 
-        return shape
+        return shape, device
 
 """ 
 Convert the inputs into the required formats for the C library.
@@ -63,10 +71,10 @@ def __create_output(shape):
 """
 Shortcut to take care of inputs.
 """
-def __handle_inputs(im, A, shape, interp):
-        shape = __check_inputs(im, A, shape)
+def __handle_inputs(im, A, shape, interp, device):
+        shape, device = __check_inputs(im, A, shape, device)
         im, dtype, A, interpCode = __convert_inputs(im, A, interp)
-        return im, dtype, A, shape, interpCode
+        return im, dtype, A, shape, interpCode, device
 
 """
 Warp a since image. Returns the result in the same datatype as the input.
@@ -87,12 +95,15 @@ Arguments:
         winMin -- The minimum intensity value to be used in the window.
         occZmin -- The minimum z-value to be occluded.
         occZmax -- The maximum z-value to be occluded.
+        device -- The ID of the CUDA device to be used. (Optional)
 """
 def warp(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1):
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
+        device=None):
 
         # Handle inputs
-        im, dtype, A, shape, interpCode = __handle_inputs(im, A, shape, interp)
+        im, dtype, A, shape, interpCode, device = __handle_inputs(im, A, shape,
+                interp, device)
 
         # Create the output
         out = __create_output(shape)
@@ -113,7 +124,8 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
 		ctypes.c_float(winMin),
 		ctypes.c_float(winMax),
 		ctypes.c_int(occZmin),
-		ctypes.c_int(occZmax)
+		ctypes.c_int(occZmax),
+                ctypes.c_int(device)
         )
 
         if ret != 0:
@@ -127,10 +139,12 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
 Push an image onto the queue. See warp() for parameters.
 """
 def push(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1):
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
+        device=None):
 
         # Handle inputs
-        im, dtype, A, shape, interpCode = __handle_inputs(im, A, shape, interp)
+        im, dtype, A, shape, interpCode, device = __handle_inputs(im, A, shape,
+                interp, device)
 
         # Enqueue the image warping
         ret = pyCudaImageWarp.pushfun(
@@ -147,7 +161,8 @@ def push(im, A, interp='linear', shape=None, std=0.0,
 		ctypes.c_float(winMin),
 		ctypes.c_float(winMax),
 		ctypes.c_int(occZmin),
-		ctypes.c_int(occZmax)
+		ctypes.c_int(occZmax),
+                ctypes.c_int(device)
         )
 
         if ret != 0:

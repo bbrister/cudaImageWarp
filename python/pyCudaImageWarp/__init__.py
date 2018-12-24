@@ -54,6 +54,7 @@ warpfun.argtypes = [
     ctypes.c_float,
     ctypes.c_float,
     ctypes.c_int,
+    ctypes.c_int,
     ctypes.c_int
     ]
 warpfun.restype = ctypes.c_int
@@ -73,6 +74,7 @@ pushfun.argtypes = [
     ctypes.c_float,
     ctypes.c_float,
     ctypes.c_float,
+    ctypes.c_int,
     ctypes.c_int,
     ctypes.c_int
     ]
