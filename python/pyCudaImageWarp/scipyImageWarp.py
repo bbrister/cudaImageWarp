@@ -10,13 +10,14 @@ from cudaImageWarp import __check_inputs
 import pyCudaImageWarp
 
 def push(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1):
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1,
+        device=None):
     """
         Reimplementation of push() in cudaImageWarp.py
     """
 
     # Check inputs
-    shape = __check_inputs(im, A, shape)
+    shape, device = __check_inputs(im, A, shape, device)
 
     # Map from interpolation mode to spline order
     interpMap = {
