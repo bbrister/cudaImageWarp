@@ -10,6 +10,10 @@ import nibabel as nib
 
 from pyCudaImageWarp import augment3d
 
+def apply_and_write_output(im, xform, name, api='cuda'):
+    out = augment3d.apply_xforms([xform], [im.get_data()], api=api)[0][0]
+    nib.save(nib.Nifti1Image(out, im.affine, header=im.header), name) 
+
 inPath = sys.argv[1]
 
 # Load the image
@@ -17,37 +21,36 @@ im = nib.load(inPath)
 data = im.get_data()
 
 # Test the augmenter with each transform
-identity = augment3d.cuda_affine_augment3d([data])[0][0]
-nib.save(nib.Nifti1Image(identity, im.affine, header=im.header), 'identity.nii.gz')
+identity = augment3d.get_xform(data)
+apply_and_write_output(im, identity, 'identity.nii.gz')
 
-rotate = augment3d.cuda_affine_augment3d([data], rotMax=(90, 90, 90))[0][0]
-nib.save(nib.Nifti1Image(rotate, im.affine, header=im.header), 'rotate.nii.gz')
+rotate = augment3d.get_xform(data, rotMax=(90, 90, 90))
+apply_and_write_output(im, rotate, 'rotate.nii.gz')
 
-reflect = augment3d.cuda_affine_augment3d([data], pReflect=(0, 0, 1))[0][0]
-nib.save(nib.Nifti1Image(reflect, im.affine, header=im.header), 'reflect.nii.gz')
+reflect = augment3d.get_xform(data, pReflect=(0, 0, 1))
+apply_and_write_output(im, reflect, 'reflect.nii.gz')
 
-shear = augment3d.cuda_affine_augment3d([data], shearMax=(2,0,0))[0][0]
-nib.save(nib.Nifti1Image(shear, im.affine, header=im.header), 'shear.nii.gz')
+shear = augment3d.get_xform(data, shearMax=(2,0,0))
+apply_and_write_output(im, shear, 'shear.nii.gz')
 
-translate = augment3d.cuda_affine_augment3d([data], transMax=(30,30,30))[0][0]
-nib.save(nib.Nifti1Image(translate, im.affine, header=im.header), 'translate.nii.gz')
+translate = augment3d.get_xform(data, transMax=(30,30,30))
+apply_and_write_output(im, translate, 'translate.nii.gz')
 
-other = augment3d.cuda_affine_augment3d([data], otherScale=0.33)[0][0]
-nib.save(nib.Nifti1Image(other, im.affine, header=im.header), 'other.nii.gz')
+other = augment3d.get_xform(data, otherScale=0.33)
+apply_and_write_output(im, other, 'other.nii.gz')
 
-crop = augment3d.cuda_affine_augment3d([data], shapeList=[(100, 100, 100)])[0][0]
-nib.save(nib.Nifti1Image(crop, im.affine, header=im.header), 'crop.nii.gz')
+crop = augment3d.get_xform(data, shape=(100, 100, 100))
+apply_and_write_output(im, crop, 'crop.nii.gz')
 
-noise = augment3d.cuda_affine_augment3d([data], noiseLevel=50)[0][0]
-nib.save(nib.Nifti1Image(noise, im.affine, header=im.header), 'noise.nii.gz')
+noise = augment3d.get_xform(data, noiseLevel=50)
+apply_and_write_output(im, noise, 'noise.nii.gz')
 
-window = augment3d.cuda_affine_augment3d([data], windowMin=(0,) * 2, 
-	windowMax=(150,) * 2)[0][0]
-nib.save(nib.Nifti1Image(window, im.affine, header=im.header), 'window.nii.gz')
+window = augment3d.get_xform(data, windowMin=(0,) * 2, 
+	windowMax=(150,) * 2)
+apply_and_write_output(im, window, 'window.nii.gz')
 
-occlude = augment3d.cuda_affine_augment3d([data], occludeProb=1.0)[0][0]
-nib.save(nib.Nifti1Image(occlude, im.affine, header=im.header), 'occlude.nii.gz')
+occlude = augment3d.get_xform(data, occludeProb=1.0)
+apply_and_write_output(im, occlude, 'occlude.nii.gz')
 
 # Test the Scipy backup implementation
-cpu_rotate = augment3d.cuda_affine_augment3d([data], rotMax=(90, 90, 90), api='scipy')[0][0]
-nib.save(nib.Nifti1Image(rotate, im.affine, header=im.header), 'scipy_rotate.nii.gz')
+apply_and_write_output(im, rotate, 'scipy_rotate.nii.gz', api='scipy')

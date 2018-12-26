@@ -5,6 +5,13 @@ import scipy.ndimage as nd
 from pyCudaImageWarp import cudaImageWarp
 
 """
+    Pad the image to have a singleton channel dimension.
+"""
+def __pad_channel__(im):
+    ndim = 3
+    return np.expand_dims(im, ndim) if len(im.shape) < ndim + 1 else im
+
+"""
     Adjust the translation component of an affine transform so that it maps
     'point' to 'target'. Does not change the linear component.
 
@@ -109,100 +116,19 @@ def get_translation_affine(offset):
 
     All transforms fix the center of the image, except for translation.
 """
-def cuda_affine_augment3d(imList, segList=None, shapeList=None, rand_seed=None,
-    init=np.eye(3), rotMax=(0, 0, 0), pReflect=(0, 0, 0), 
+def get_xform(im, shape=None, rand_seed=None,
+    rotMax=(0, 0, 0), pReflect=(0, 0, 0), init=np.eye(3),
     shearMax=(1,1,1), transMax=(0,0,0), otherScale=0, randomCrop='none', 
     noiseLevel=0, windowMin=None, windowMax=None, 
-    occludeProb=0.0, oob_label=0, printFun=None, oob_image_val=None, 
-    api='cuda', device=None):
-
-    # Choose the implementation based on api
-    if api == 'cuda':
-        pushFun = cudaImageWarp.push
-        popFun = cudaImageWarp.pop
-    elif api == 'scipy':
-        from pyCudaImageWarp import scipyImageWarp
-        pushFun = scipyImageWarp.push
-        popFun = scipyImageWarp.pop
-    else:
-        raise ValueError('Unrecognized api: ' + api)
+    occludeProb=0.0, printFun=None):
 
     # Default to have the same output and input shape
-    if shapeList is None:
-        shapeList = [im.shape for im in imList]
-
-    # Verify inputs
-    if segList is None and oob_label != 0:
-        raise ValueError('Cannot set oob_label when segList is None')
-
-    # Convert inputs to a list
-    if segList is None:
-        segList = [None for im in imList]
-        haveSeg = False
-    else:
-        haveSeg = True
-    if len(imList) != len(segList):
-        raise ValueError('im and seg must have the same number of elements')
-
-    # Create a dummy segmentation, if out-of-bounds is required
-    if not haveSeg and oob_image_val is not None:
-        segList = [np.zeros(shape, dtype=int) for im in imList]
-
-    # Push all the inputs
-    segShifts = []
-    for im, seg, shape in zip(imList, segList, shapeList):
-
-        # Shift the segmentation so the minimum label is 1, unless the OOB
-        # label is zero (default) and the user doesn't specify an OOB
-        # image value
-        shift = 0 if oob_label == 0 and oob_image_val is None else \
-                np.min(seg) - 1
-        if shift != 0:
-            seg -= shift
-
-        __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init,
-            rotMax, pReflect, shearMax, transMax, otherScale, randomCrop, 
-            noiseLevel, windowMin, windowMax, occludeProb, 
-            oob_label, oob_image_val, printFun, pushFun, device)
-
-        segShifts.append(shift)
-
-    # Pop all the outputs
-    augImList = []
-    augSegList = []
-    for im, seg, shape, shift in zip(imList, segList, shapeList, segShifts):
-        augIm = __cuda_affine_augment3d_pop(shape, im.dtype, popFun)
-        augSeg = None if seg is None else \
-                __cuda_affine_augment3d_pop(shape[:3], seg.dtype, popFun)
-
-        # Set the out-of-bounds values and undo label shifting
-        if shift != 0:
-            oob = augSeg == 0
-            if haveSeg: # No need to undo dummy values
-                augSeg += shift
-                augSeg[oob] = oob_label
-            if oob_image_val is not None:
-                augIm[oob] = oob_image_val
-
-        augImList.append(augIm)
-        augSegList.append(augSeg)
-
-    # Return two or three outputs, depending on the input
-    return augImList, augSegList if haveSeg else augImList
-
-def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pReflect,
-        shearMax, transMax, otherScale, randomCrop, noiseLevel, 
-        windowMin, windowMax, occludeProb, oob_label, oob_image_val, printFun, 
-        pushFun, device):
-    """
-        Start processing an image. Called by cuda_affine_augment3d. Returns the
-        cropping coordinates. Pushes im first, then pushes seg if it's not None.
-    """
+    if shape is None:
+        shape = im.shape
 
     # Pad the image to have a channel dimension
     ndim = 3
-    if len(im.shape) < ndim + 1:
-	im = np.expand_dims(im, ndim)
+    im = __pad_channel__(im)
 
     # Pad the shape with a channel dimension
     if len(shape) == ndim:
@@ -234,7 +160,6 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
     else:
         occludeWidth = None
 
-    # Initial linear transform
     mat_init = np.identity(4)
     mat_init[0:3, 0:3] = init
 
@@ -321,7 +246,6 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
         shape_center + translation,
         crop_center
     )
-    warp_affine = mat_total[0:3, :]
 
     # Draw the window thresholds uniformly in the specified range
     if windowMin is not None:
@@ -344,30 +268,125 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
 	occZmin = 0
 	occZmax = -1
 
-    # Warp each image channel the same way
-    for c in range(shape[3]):
-	pushFun(
-		im[:, :, :, c], 
-		warp_affine, 
-		interp='linear',
-		shape=shape[:3],
-		std=noiseScale,
-		winMin=winMin,
-		winMax=winMax,
-		occZmin=occZmin,
-		occZmax=occZmax,
-                device=device
-	)
-
     # Optionally print the result
     if printFun is not None:
         printFun("crop_center: [%d, %d, %d]" % (crop_center[0], crop_center[1], crop_center[2]))
         printFun("occZmin: %d occZmax: %d" % (occZmin, occZmax))
-        printFun("winZmin: %d winZmax: %d" % (winMin, winMax))
+        printFun("winmin: %d winmax: %d" % (winMin, winMax))
         printFun("rotation: [%d, %d, %d]" % (rotate_deg[0], rotate_deg[1], 
                 rotate_deg[2]))
         printFun("translation: [%d, %d, %d]" % (translation[0], translation[1],
                 translation[2]))
+    # Return a dict containing all the transform parameters
+    return {
+        'affine': mat_total,
+        'occZmin': occZmin,
+        'occZmax': occZmax,
+        'winMin': winMin,
+        'winMax': winMax,
+        'noiseScale': noiseScale,
+        'shape': shape
+    }
+
+"""
+    Apply transforms which were created with get_xform.
+"""
+def apply_xforms(xformList, imList, segList=None,
+    oob_image_val=None, oob_label=0, api='cuda', device=None):
+
+    # Choose the implementation based on api
+    if api == 'cuda':
+        pushFun = cudaImageWarp.push
+        popFun = cudaImageWarp.pop
+    elif api == 'scipy':
+        from pyCudaImageWarp import scipyImageWarp
+        pushFun = scipyImageWarp.push
+        popFun = scipyImageWarp.pop
+    else:
+        raise ValueError('Unrecognized api: ' + api)
+
+    # Verify inputs
+    if segList is None and oob_label != 0:
+        raise ValueError('Cannot set oob_label when segList is None')
+
+    # Convert inputs to a list
+    if segList is None:
+        segList = [None for im in imList]
+        haveSeg = False
+    else:
+        haveSeg = True
+    if len(imList) != len(segList):
+        raise ValueError('im and seg must have the same number of elements')
+
+    # Create a dummy segmentation, if out-of-bounds is required
+    if not haveSeg and oob_image_val is not None:
+        segList = [np.zeros(shape, dtype=int) for im in imList]
+
+    # Push all the inputs
+    segShifts = []
+    for im, seg, xform in zip(imList, segList, xformList):
+
+        # Shift the segmentation so the minimum label is 1, unless the OOB
+        # label is zero (default) and the user doesn't specify an OOB
+        # image value
+        shift = 0 if oob_label == 0 and oob_image_val is None else \
+                np.min(seg) - 1
+        if shift != 0:
+            seg -= shift
+
+        __push_xform(xform, im, seg, pushFun, device)
+
+        segShifts.append(shift)
+
+    # Pop all the outputs
+    augImList = []
+    augSegList = []
+    for im, seg, xform, shift in zip(imList, segList, xformList, segShifts):
+        shape = xform['shape']
+        augIm = __pop_xform(shape, im.dtype, popFun)
+        augSeg = None if seg is None else \
+                __pop_xform(shape[:3], seg.dtype, popFun)
+
+        # Set the out-of-bounds values and undo label shifting
+        if shift != 0:
+            oob = augSeg == 0
+            if haveSeg: # No need to undo dummy values
+                augSeg += shift
+                augSeg[oob] = oob_label
+            if oob_image_val is not None:
+                augIm[oob] = oob_image_val
+
+        augImList.append(augIm)
+        augSegList.append(augSeg)
+
+    # Return two or three outputs, depending on the input
+    return augImList, augSegList if haveSeg else augImList
+
+def __push_xform(xform, im, seg, pushFun, device):
+    """
+        Start processing an image. Called by apply_xforms. Returns the
+        cropping coordinates. Pushes im first, then pushes seg if it's not None.
+    """
+
+    # Add a channel dimension
+    im = __pad_channel__(im)
+
+    # Warp each image channel the same way
+    warp_affine = xform['affine'][0:3, :]
+    shape = xform['shape'][:3]
+    for c in range(xform['shape'][3]):
+	pushFun(
+		im[:, :, :, c], 
+		warp_affine, 
+		interp='linear',
+		shape=shape,
+		std=xform['noiseScale'],
+		winMin=xform['winMin'],
+		winMax=xform['winMax'],
+		occZmin=xform['occZmin'],
+		occZmax=xform['occZmax'],
+                device=device
+	)
 
     # Return early if there's no segmentation
     if seg is None:
@@ -378,23 +397,24 @@ def __cuda_affine_augment3d_push(im, seg, shape, rand_seed, init, rotMax, pRefle
 	seg, 
 	warp_affine, 
 	interp='nearest',
-	shape=shape[:3], 
-	occZmin=occZmin,
-	occZmax=occZmax,
+	shape=shape, 
+	occZmin=xform['occZmin'],
+	occZmax=xform['occZmax'],
         device=device
     )
 
     return
 
-def __cuda_affine_augment3d_pop(shape, dtype, popFun):
+def __pop_xform(shape, dtype, popFun):
     """
     Finish processing an image, and return the result. Squeezes out the channel
     dimension, if necessary.
     """
+
     # Pop multi-channel images one channel at a time
     if len(shape) > 3:
         im = np.zeros(shape, dtype=dtype, order='F')
-        for c in range(im.shape[3]):
+        for c in range(shape[3]):
             im[:, :, :, c] = popFun()
         return im
 
