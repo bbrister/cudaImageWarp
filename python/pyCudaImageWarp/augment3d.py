@@ -81,9 +81,9 @@ def get_translation_affine(offset):
 
     By default, the function only generates the identity map. The affine
     transform distribution is controlled by the following parameters:
-        imList - A list of input images.
-        segList - A list of input segmentations (optional).
-        shapeList - A list of output shapes (optional).
+        im - The input image, a numpy array.
+        seg - The input segmentation, same shape as im (optional).
+        shape - The output shape (optional).
         init - The initial linear transform. Defaults to identity.
         rotMax - Uniform rotation about (x,y,z) axes. For example, (10,10,10)
             means +-10 degrees in about each axis.
@@ -102,10 +102,13 @@ def get_translation_affine(offset):
             'nonzero' - Choose only from crops whose centers have a positive 
                 label. Cannot be used if segList is None.
 	noiseLevel - Decide the amount of noise using this standard deviation.
-	windowMin - A pair of values, from which the lower window threshold is
-		sampled uniformly. By default, this does nothing.
-	windowMax - A pair of values, from which the upper window threshold is
-		sampled uniformly. By default, this does nothing.
+	windowMin - A 2xC matrix, where C is the number of channels in im, 
+            from which the lower window threshold is sampled uniformly. By 
+            default, this does nothing. The cth row defines the limits for the 
+            cth channel.
+	windowMax - A matrix from which the upper window threshold is
+            sampled uniformly. Same format as winMin. By default, this does 
+            nothing.
 	occludeProb - Probability that we randomly take out a chunk of out of 
             the image.
 	oob_label - The label assigned to out-of-bounds pixels (default: 0)
@@ -133,6 +136,7 @@ def get_xform(im, shape=None, rand_seed=None,
     # Pad the shape with a channel dimension
     if len(shape) == ndim:
 	shape = shape + (1,)
+    numChannels = shape[-1]
 
     # Check that the input and output shapes are compatible
     if len(shape) > ndim and shape[ndim] != im.shape[ndim]:
@@ -247,15 +251,27 @@ def get_xform(im, shape=None, rand_seed=None,
         crop_center
     )
 
+    # Any columns with infinity  are unchanged
+    winMin = np.array([-float('inf') for x in range(numChannels)])
+    winMax = np.array([float('inf') for x in range(numChannels)])
+    validCols = ~np.any(
+        ((np.abs(windowMin) == float('inf')) 
+            | (np.abs(windowMax) == float('inf'))),
+        axis=0
+    )
+
     # Draw the window thresholds uniformly in the specified range
+    numChannels = shape[-1]
     if windowMin is not None:
-	winMin = np.random.uniform(low=windowMin[0], high=windowMin[1])
-    else:
-	winMin = -float('inf')
+        winMin[validCols] = np.random.uniform(
+            low=windowMin[0, validCols], 
+            high=windowMin[1, validCols]
+        )
     if windowMax is not None:
-	winMax = np.random.uniform(low=windowMax[0], high=windowMax[1])
-    else:
-	winMax = float('inf')
+        winMax[validCols] = np.random.uniform(
+            low=windowMax[0, validCols], 
+            high=windowMax[1, validCols]
+        )
 
     # Draw the occlusion parameters
     if occludeWidth is not None:
@@ -381,8 +397,8 @@ def __push_xform(xform, im, seg, pushFun, device):
 		interp='linear',
 		shape=shape,
 		std=xform['noiseScale'],
-		winMin=xform['winMin'],
-		winMax=xform['winMax'],
+		winMin=xform['winMin'][c],
+		winMax=xform['winMax'][c],
 		occZmin=xform['occZmin'],
 		occZmax=xform['occZmax'],
                 device=device
