@@ -101,7 +101,8 @@ def get_translation_affine(offset):
             'all' - All crops are equally likely.
             'nonzero' - Choose only from crops whose centers have a positive 
                 label. Cannot be used if segList is None.
-	noiseLevel - Decide the amount of noise using this standard deviation.
+	noiseLevel - An array of C elements. Decide the amount of noise for each channel 
+            using this standard deviation.
 	windowMin - A 2xC matrix, where C is the number of channels in im, 
             from which the lower window threshold is sampled uniformly. By 
             default, this does nothing. The cth row defines the limits for the 
@@ -122,7 +123,7 @@ def get_translation_affine(offset):
 def get_xform(im, shape=None, rand_seed=None,
     rotMax=(0, 0, 0), pReflect=(0, 0, 0), init=np.eye(3),
     shearMax=(1,1,1), transMax=(0,0,0), otherScale=0, randomCrop='none', 
-    noiseLevel=0, windowMin=None, windowMax=None, 
+    noiseLevel=None, windowMin=None, windowMax=None, 
     occludeProb=0.0, printFun=None):
 
     # Default to have the same output and input shape
@@ -155,7 +156,10 @@ def get_xform(im, shape=None, rand_seed=None,
     # ---Randomly generate the desired transforms, in homogeneous coordinates---
     
     # Draw the noise level
-    noiseScale = np.abs(np.random.normal(scale=noiseLevel))
+    if noiseLevel is not None:
+        noiseScale = np.abs(np.random.normal(scale=noiseLevel))
+    else:
+        noiseScale = np.zeros(im.shape[-1])
 
     # Draw the width of occlusion, if any
     if np.random.uniform() < occludeProb:
@@ -288,7 +292,7 @@ def get_xform(im, shape=None, rand_seed=None,
     if printFun is not None:
         printFun("crop_center: [%d, %d, %d]" % (crop_center[0], crop_center[1], crop_center[2]))
         printFun("occZmin: %d occZmax: %d" % (occZmin, occZmax))
-        printFun("winmin: %d winmax: %d" % (winMin, winMax))
+        printFun("winmin: %s winmax: %s" % (winMin, winMax))
         printFun("rotation: [%d, %d, %d]" % (rotate_deg[0], rotate_deg[1], 
                 rotate_deg[2]))
         printFun("translation: [%d, %d, %d]" % (translation[0], translation[1],
@@ -396,7 +400,7 @@ def __push_xform(xform, im, seg, pushFun, device):
 		warp_affine, 
 		interp='linear',
 		shape=shape,
-		std=xform['noiseScale'],
+		std=xform['noiseScale'][c],
 		winMin=xform['winMin'][c],
 		winMax=xform['winMax'][c],
 		occZmin=xform['occZmin'],
