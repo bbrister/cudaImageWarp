@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
     // Warp and crop the image
     if (cuda_image_warp(in.data, in.nx, in.ny, in.nz, 
         out.data, out.nx, out.ny, out.nz, 1, params, 100.0f, -INFINITY, 
-	INFINITY, zMin, zMax)) {
+	INFINITY, zMin, zMax, -1)) {
         fputs("Error warping image", stderr);
         return -1;
     }
