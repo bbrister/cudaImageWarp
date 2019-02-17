@@ -95,10 +95,11 @@ Arguments:
         winMin -- The minimum intensity value to be used in the window.
         occZmin -- The minimum z-value to be occluded.
         occZmax -- The maximum z-value to be occluded.
+        oob - The value assigned to out-of-bounds voxels.
         device -- The ID of the CUDA device to be used. (Optional)
 """
 def warp(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
         device=None):
 
         # Handle inputs
@@ -125,6 +126,7 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
 		ctypes.c_float(winMax),
 		ctypes.c_int(occZmin),
 		ctypes.c_int(occZmax),
+		ctypes.c_float(oob),
                 ctypes.c_int(device)
         )
 
@@ -140,7 +142,7 @@ Push an image onto the queue. See warp() for parameters.
 """
 def push(im, A, interp='linear', shape=None, std=0.0, 
 	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
-        device=None):
+        oob=0, device=None):
 
         # Handle inputs
         im, dtype, A, shape, interpCode, device = __handle_inputs(im, A, shape,
@@ -162,6 +164,7 @@ def push(im, A, interp='linear', shape=None, std=0.0,
 		ctypes.c_float(winMax),
 		ctypes.c_int(occZmin),
 		ctypes.c_int(occZmax),
+		ctypes.c_float(oob),
                 ctypes.c_int(device)
         )
 

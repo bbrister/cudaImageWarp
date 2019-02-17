@@ -10,8 +10,8 @@ from cudaImageWarp import __check_inputs
 import pyCudaImageWarp
 
 def push(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1,
-        device=None):
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
+        oob=0.0, device=None):
     """
         Reimplementation of push() in cudaImageWarp.py
     """
@@ -32,7 +32,7 @@ def push(im, A, interp='linear', shape=None, std=0.0,
         output_shape=shape, 
         order=interpMap[interp], 
         mode='constant',
-        cval=0.0,
+        cval=oob,
         prefilter=False
     )
 

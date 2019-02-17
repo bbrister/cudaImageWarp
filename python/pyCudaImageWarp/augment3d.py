@@ -259,8 +259,8 @@ def get_xform(im, shape=None, rand_seed=None,
     winMin = np.array([-float('inf') for x in range(numChannels)])
     winMax = np.array([float('inf') for x in range(numChannels)])
     validCols = ~np.any(
-        ((np.abs(windowMin) == float('inf')) 
-            | (np.abs(windowMax) == float('inf'))),
+        (windowMin is not None and (np.abs(windowMin) == float('inf')) 
+            | (windowMax is not None and np.abs(windowMax) == float('inf'))),
         axis=0
     )
 
@@ -312,7 +312,7 @@ def get_xform(im, shape=None, rand_seed=None,
     Apply transforms which were created with get_xform.
 """
 def apply_xforms(xformList, imList, segList=None,
-    oob_image_val=None, oob_label=0, api='cuda', device=None):
+    oob_image_val=0, oob_label=0, api='cuda', device=None):
 
     # Choose the implementation based on api
     if api == 'cuda':
@@ -338,51 +338,23 @@ def apply_xforms(xformList, imList, segList=None,
     if len(imList) != len(segList):
         raise ValueError('im and seg must have the same number of elements')
 
-    # Create a dummy segmentation, if out-of-bounds is required
-    if not haveSeg and oob_image_val is not None:
-        segList = [np.zeros(shape, dtype=int) for im in imList]
-
     # Push all the inputs
-    segShifts = []
     for im, seg, xform in zip(imList, segList, xformList):
-
-        # Shift the segmentation so the minimum label is 1, unless the OOB
-        # label is zero (default) and the user doesn't specify an OOB
-        # image value
-        shift = 0 if oob_label == 0 and oob_image_val is None else \
-                np.min(seg) - 1
-        if shift != 0:
-            seg -= shift
-
-        __push_xform(xform, im, seg, pushFun, device)
-
-        segShifts.append(shift)
+        __push_xform(xform, im, seg, pushFun, oob_image_val, oob_label, device)
 
     # Pop all the outputs
     augImList = []
     augSegList = []
-    for im, seg, xform, shift in zip(imList, segList, xformList, segShifts):
+    for im, seg, xform in zip(imList, segList, xformList):
         shape = xform['shape']
-        augIm = __pop_xform(shape, im.dtype, popFun)
-        augSeg = None if seg is None else \
-                __pop_xform(shape[:3], seg.dtype, popFun)
-
-        # Set the out-of-bounds values and undo label shifting
-        if shift != 0:
-            oob = augSeg == 0
-            if haveSeg: # No need to undo dummy values
-                augSeg += shift
-                augSeg[oob] = oob_label
-            if oob_image_val is not None:
-                augIm[oob] = oob_image_val
-
-        augImList.append(augIm)
-        augSegList.append(augSeg)
+        augImList.append(__pop_xform(shape, im.dtype, popFun))
+        augSegList.append(None if seg is None else \
+                __pop_xform(shape[:3], seg.dtype, popFun))
 
     # Return two or three outputs, depending on the input
     return augImList, augSegList if haveSeg else augImList
 
-def __push_xform(xform, im, seg, pushFun, device):
+def __push_xform(xform, im, seg, pushFun, oob_image_val, oob_label, device):
     """
         Start processing an image. Called by apply_xforms. Returns the
         cropping coordinates. Pushes im first, then pushes seg if it's not None.
@@ -405,6 +377,7 @@ def __push_xform(xform, im, seg, pushFun, device):
 		winMax=xform['winMax'][c],
 		occZmin=xform['occZmin'],
 		occZmax=xform['occZmax'],
+                oob=oob_image_val,
                 device=device
 	)
 
@@ -420,6 +393,7 @@ def __push_xform(xform, im, seg, pushFun, device):
 	shape=shape, 
 	occZmin=xform['occZmin'],
 	occZmax=xform['occZmax'],
+        oob=oob_label,
         device=device
     )
 

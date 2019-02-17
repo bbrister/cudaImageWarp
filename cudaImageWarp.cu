@@ -58,7 +58,7 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
     const float std, const int nx, const int ny, const int nz, 
     const float window_min, const float window_max,
     const float4 xWarp, const float4 yWarp, const float4 zWarp, 
-    const int occZmin, const int occZmax)
+    const int occZmin, const int occZmax, const float oob)
 {
 
 #define CUDA_SET_DIMS \
@@ -78,7 +78,7 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
 
     // Perform occlusion, exit early for occluded voxels
     if (z >= occZmin && z <= occZmax) {
-        output[idx] = 0;
+        output[idx] = oob;
         return;
     }
 
@@ -86,6 +86,15 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
     const float xs = affine_warp(x, y, z, xWarp);
     const float ys = affine_warp(x, y, z, yWarp);
     const float zs = affine_warp(x, y, z, zWarp);
+
+    // Check for out-of-bounds texture access
+    const float nxf = (float) nx + 0.5f;
+    const float nyf = (float) ny + 0.5f;
+    const float nzf = (float) nz + 0.5f;
+    if (xs < 0 || xs > nxf || ys < 0 || ys > nyf || zs < 0 || zs > nzf) {
+        output[idx] = oob;
+        return;
+    }
 
     // Sample from the 3D texture
     const float in = tex3D<float>(tex, xs, ys, zs);
@@ -152,8 +161,8 @@ private:
         const int nxi, const int nyi, const int nzi, 
         const int nxo, const int nyo, const int nzo, 
         const int filter_mode, const float *const params, const float std,
-        const float window_min, const float window_max,
-        const int occZmin, const int occZmax, const int device) {
+        const float window_min, const float window_max, const int occZmin, 
+	const int occZmax, const float oob, const int device) {
 
 	// Settings
 	const int with_rands = std > 0.0f;
@@ -166,7 +175,7 @@ private:
 	// Get the number of devices, and choose the next one for use
 	int num_devices;
 	gpuErrchk(cudaGetDeviceCount(&num_devices));
-	current_device == (device < 0 ? current_device + 1 : device) % 
+	current_device = (device < 0 ? current_device + 1 : device) % 
 		num_devices;
 	cudaSetDevice(current_device);
 
@@ -241,7 +250,7 @@ private:
         // Perform image warping and augmentation
         warp<<<gridSize, blockSize>>>(tex, (float *) output, 
             rands, std, nxo, nyo, nzo, window_min, window_max, xWarp, 
-            yWarp, zWarp, occZmin, occZmax);
+            yWarp, zWarp, occZmin, occZmax, oob);
         gpuErrchk(cudaPeekAtLastError());
 
         return 0;
@@ -265,14 +274,14 @@ public:
         const int nxi, const int nyi, const int nzi, 
         const int nxo, const int nyo, const int nzo, 
         const int filter_mode, const float *const params, const float std,
-        const float window_min, const float window_max,
-        const int occZmin, const int occZmax, const int device) {
+        const float window_min, const float window_max, const int occZmin, 
+	const int occZmax, const float oob, const int device) {
 
         int ret;
 
         if ((ret = _warp_start(input, nxi, nyi, nzi, nxo, nyo, nzo, filter_mode,
-                params, std, window_min, window_max, occZmin, occZmax, device)
-		) != 0) {
+                params, std, window_min, window_max, occZmin, occZmax, oob, 
+		device)) != 0) {
             cleanup();
         }
 
@@ -322,6 +331,7 @@ static size_t get_size(const int nx, const int ny, const int nz) {
 *  window_max - the maximum value for the window. Use INFINITY to do nothing.
 *  occZmin - the minimum z-coordinate to be occluded
 *  occZmax - the maximimum z-coordinate to be occluded
+*  oob - the value for out-of-bounds voxels
 *  device - the index of the CUDA device to use. If negative, defaults to the
 	least recently used device.
 *
@@ -334,13 +344,13 @@ int cuda_image_warp(const float *const input,
     const int nxo, const int nyo, const int nzo, 
     const int filter_mode, const float *const params, const float std,
     const float window_min, const float window_max,
-    const int occZmin, const int occZmax, const int device) {
+    const int occZmin, const int occZmax, const float oob, const int device) {
 
     State state;
 
     return state.warp_start(input, nxi, nyi, nzi, nxo, 
             nyo, nzo, filter_mode, params, std, window_min, window_max, occZmin,
-            occZmax, device) || state.warp_finish(output);
+            occZmax, oob, device) || state.warp_finish(output);
                 
 }
 
@@ -365,7 +375,7 @@ int cuda_image_warp_push(const float *const input,
     const int nxo, const int nyo, const int nzo, 
     const int filter_mode, const float *const params, const float std,
     const float window_min, const float window_max,
-    const int occZmin, const int occZmax, const int device) {
+    const int occZmin, const int occZmax, const float oob, const int device) {
 
     int ret;
 
@@ -375,7 +385,7 @@ int cuda_image_warp_push(const float *const input,
     // Start the computation
     if ((ret = state.warp_start(input, nxi, nyi, nzi, nxo, nyo, 
         nzo, filter_mode, params, std, window_min, window_max, occZmin, 
-        occZmax, device)))
+        occZmax, oob, device)))
         return ret;
         
     // Add the state to the queue
