@@ -41,9 +41,10 @@ def push(im, A, interp='linear', shape=None, std=0.0,
         im += np.random.normal(scale=std)
 
     # Window
-    im = np.maximum(np.minimum(im, winMin), winMax)
+    im = np.maximum(np.minimum(im, winMax), winMin)
     win_width = winMax - winMin
     if win_width != float('inf') and win_width != -float('inf'):
+        im -= winMin
         im /= win_width
 
     # Occlusion

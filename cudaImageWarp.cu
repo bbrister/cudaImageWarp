@@ -1,8 +1,8 @@
-#include <queue>
-
+#include <queue> 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 
 #include <cuda_runtime.h>
 #include <cuda.h>
@@ -15,6 +15,8 @@
 int current_device = 0;
 
 /* Useful macros */
+#define MAX(x, y) ((x) > (y) ? (x) : (y))
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define DIVC(x, y)  (((x) + (y) + 1) / (y)) // Divide positive integers and ceil
 
 #define gpuAssert(code, file, line) { \
@@ -55,7 +57,8 @@ __device__ float postprocess(const float in, curandState_t *state,
 /* Image warping kernel */
 __global__ void
 warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
-    const float std, const int nx, const int ny, const int nz, 
+    const float std, const int nxi, const int nyi, const int nzi, 
+    const int nxo, const int nyo, const int nzo, 
     const float window_min, const float window_max,
     const float4 xWarp, const float4 yWarp, const float4 zWarp, 
     const int occZmin, const int occZmax, const float oob)
@@ -67,11 +70,11 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
     const int z = blockIdx.z * blockDim.z + threadIdx.z; \
     \
     /* Check boundaries */ \
-    if (x >= nx || y >= ny || z >= nz) \
+    if (x >= nxo || y >= nyo || z >= nzo) \
 	return; \
     \
-    const int y_stride = nx; \
-    const int z_stride = nx * ny; \
+    const int y_stride = nxo; \
+    const int z_stride = nxo * nyo; \
     const int idx = z * z_stride + y * y_stride + x; 
 
     CUDA_SET_DIMS
@@ -88,16 +91,16 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
     const float zs = affine_warp(x, y, z, zWarp);
 
     // Check for out-of-bounds texture access
-    const float nxf = (float) nx + 0.5f;
-    const float nyf = (float) ny + 0.5f;
-    const float nzf = (float) nz + 0.5f;
-    if (xs < 0 || xs > nxf || ys < 0 || ys > nyf || zs < 0 || zs > nzf) {
+    const float nxif = (float) nxi + 1.0f;
+    const float nyif = (float) nyi + 1.0f;
+    const float nzif = (float) nzi + 1.0f;
+    if (xs < 0 || xs > nxif || ys < 0 || ys > nyif || zs < 0 || zs > nzif) {
         output[idx] = oob;
         return;
     }
 
     // Sample from the 3D texture
-    const float in = tex3D<float>(tex, xs, ys, zs);
+    const float in = tex3D<float>(tex, xs + 0.5, ys + 0.5, zs + 0.5);
 
     // Postprocess
     output[idx] = postprocess(in, rands + idx, std, window_min, window_max);
@@ -107,7 +110,7 @@ warp(cudaTextureObject_t tex, float *const output, curandState_t *const rands,
  * generator. This is much faster than using separate sequences with the same
  * seed, but we are not guaranteed independence between generators. */
 __global__ void initRand(const int seed, curandState_t *const rands,
-    const int nx, const int ny, const int nz) {
+    const int nxo, const int nyo, const int nzo) {
     CUDA_SET_DIMS // See warp()
     curand_init(seed + idx, 0, 0, rands + idx);
 }
@@ -117,6 +120,8 @@ static void cudaFreeAndNull(void *&ptr);
 static void cudaFreeArrayAndNull(cudaArray *&ptr);
 static size_t get_num_voxels(const int nx, const int ny, const int nz);
 static size_t get_size(const int nx, const int ny, const int nz);
+static void affine_image(const float4 warp, const int nxo, const int nyo, 
+	const int nzo, const int clamp, int *const min, int *const max);
 
 /* Class for handling the state */
 class State {
@@ -175,31 +180,53 @@ private:
 	// Get the number of devices, and choose the next one for use
 	int num_devices;
 	gpuErrchk(cudaGetDeviceCount(&num_devices));
-	current_device = (device < 0 ? current_device + 1 : device) % 
-		num_devices;
+        current_device = (device < 0 ? current_device + 1 : device) % 
+            num_devices;
 	cudaSetDevice(current_device);
 
-        // --- Allocate device memory for output
-        const size_t num_voxels = get_num_voxels(nxo, nyo, nzo);
-        output_size = get_size(nxo, nyo, nzo);
-        gpuErrchk(cudaMalloc((void**) &output, output_size));
+	// --- Allocate device memory for output
+	const size_t num_voxels = get_num_voxels(nxo, nyo, nzo);
+	output_size = get_size(nxo, nyo, nzo);
+	gpuErrchk(cudaMalloc((void**) &output, output_size));
 	if (with_rands) {
-		gpuErrchk(cudaMalloc((void**) &rands, 
-		    num_voxels * sizeof(curandState_t)));
+	    gpuErrchk(cudaMalloc((void**) &rands,
+	    num_voxels * sizeof(curandState_t)));
 	}
 
-        // --- Create 3D array
-        const cudaExtent inVolumeSize = make_cudaExtent(nxi, nyi, nzi);
+	/* Get a sub-volume of the input containing the image of the output 
+	 * under the affine transformation. This is all we need to send to the
+	 * GPU. */
+	int x_min, y_min, z_min, x_max, y_max, z_max;
+	affine_image(xWarp, nxo, nyo, nzo, nxi - 1, &x_min, &x_max);
+	affine_image(yWarp, nxo, nyo, nzo, nyi - 1, &y_min, &y_max);
+	affine_image(zWarp, nxo, nyo, nzo, nzi - 1, &z_min, &z_max);
+
+	// Translate the existing affine warps for the sub-volume
+	const float4 xWarpSub = {xWarp.x, xWarp.y, xWarp.z, xWarp.w - x_min};
+	const float4 yWarpSub = {yWarp.x, yWarp.y, yWarp.z, yWarp.w - y_min};
+	const float4 zWarpSub = {zWarp.x, zWarp.y, zWarp.z, zWarp.w - z_min};
+
+        // Create 3D array for the sub-volume
+	const int nxis = x_max - x_min + 1;  
+	const int nyis = y_max - y_min + 1;  
+	const int nzis = z_max - z_min + 1;
+        const cudaExtent texSize = make_cudaExtent(nxis, nyis, nzis);
 
         cudaChannelFormatDesc channelDesc = cudaCreateChannelDesc<float>();
-            gpuErrchk(cudaMalloc3DArray(&this->input, &channelDesc, inVolumeSize));
+	gpuErrchk(cudaMalloc3DArray(&this->input, &channelDesc, 
+					texSize));
 
-        // --- Copy the input data to a 3D array (host to device)
+        /* Copy the input data to a 3D array (host to device). Note this uses
+	 * the address strides of the original input volume, not the 
+	 * sub-volume. */
         cudaMemcpy3DParms copyParams = {0};
         copyParams.srcPtr   = make_cudaPitchedPtr((void *) input,
             nxi * sizeof(float), nxi, nyi);
+	copyParams.srcPos   = make_cudaPos(x_min,
+					   y_min, 
+					   z_min);
         copyParams.dstArray = this->input;
-        copyParams.extent   = inVolumeSize;
+        copyParams.extent   = texSize;
         copyParams.kind     = cudaMemcpyHostToDevice;
         gpuErrchk(cudaMemcpy3D(&copyParams));
 
@@ -213,7 +240,7 @@ private:
         texDescr.normalizedCoords = false;
         texDescr.addressMode[0] = cudaAddressModeBorder;
         texDescr.addressMode[1] = cudaAddressModeBorder;
-        texDescr.addressMode[2] = cudaAddressModeBorder;
+	texDescr.addressMode[2] = cudaAddressModeBorder;
         texDescr.readMode = cudaReadModeElementType;
         switch (filter_mode) {
             case 0:
@@ -221,7 +248,7 @@ private:
                 texDescr.filterMode = cudaFilterModePoint;
                 break;
             case 1:
-                // Linear interpolation
+                // Tri-linear interpolation
                 texDescr.filterMode = cudaFilterModeLinear;
                 break;
             default:
@@ -249,8 +276,8 @@ private:
 
         // Perform image warping and augmentation
         warp<<<gridSize, blockSize>>>(tex, (float *) output, 
-            rands, std, nxo, nyo, nzo, window_min, window_max, xWarp, 
-            yWarp, zWarp, occZmin, occZmax, oob);
+            rands, std, nxis, nyis, nzis, nxo, nyo, nzo, window_min, window_max, 
+	    xWarpSub, yWarpSub, zWarpSub, occZmin, occZmax, oob);
         gpuErrchk(cudaPeekAtLastError());
 
         return 0;
@@ -308,15 +335,55 @@ static void cudaFreeArrayAndNull(cudaArray *&ptr) {
 
 /* Compute the number of voxels in an array */
 static size_t get_num_voxels(const int nx, const int ny, const int nz) {
-        return ((size_t) nx) * ((size_t) ny) * ((size_t) nz);
+    return ((size_t) nx) * ((size_t) ny) * ((size_t) nz);
 }
-
 
 /* Compute the size of an array, in the internal represenataion */
 static size_t get_size(const int nx, const int ny, const int nz) {
-        return get_num_voxels(nx, ny, nz) * sizeof(float);
+    return get_num_voxels(nx, ny, nz) * sizeof(float);
 }
- 
+
+/* This is the host version of affine_warp. */
+static float affine_warp_host(const float4 warp, int x, int y, int z) {
+    return warp.x * x + warp.y * y + warp.z * z + warp.w;
+} 
+
+/* Compute the extreme points of the image of the input volume under the
+ * affine functional 'warp'. Return these in min and max. Return values are
+ * clamped to the range (0, clamp). */
+static void affine_image(const float4 warp, const int nxo, const int nyo, 
+	const int nzo, const int clamp, int *const min, int *const max) {
+
+    int x, y, z;
+
+    // Initialize the result to extreme values
+    int running_min = clamp;
+    int running_max = 0; 
+
+    // Warp all 8 corners of the cube	
+    for (z = 0; z < 2; z++) {
+    for (y = 0; y < 2; y++) {
+    for (x = 0; x < 2; x++) {
+	// Get the corner coordinate	
+	const int xc = x > 0 ? nxo - 1 : 0;
+	const int yc = y > 0 ? nyo - 1 : 0;
+	const int zc = z > 0 ? nzo - 1 : 0;
+
+	// Compute the warp and round
+	const float val = affine_warp_host(warp, xc, yc, zc);
+	const int lo = (int) floorf(val);
+	const int hi = lo + 1;
+
+	// Adjust the running min/max
+	if (lo < running_min) running_min = lo;
+	if (hi > running_max) running_max = hi;
+    }}}
+
+    // Save the results
+    *min = MAX(MIN(running_min, clamp - 1), 0);
+    *max = MAX(MIN(running_max, clamp), 0);
+}
+
 /* Warp an image in-place.  
 * Parameters:
 *  input - an array of nxi * nyi * nzi floats, strided in (x,y,z) order

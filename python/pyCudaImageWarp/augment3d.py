@@ -98,7 +98,8 @@ def get_translation_affine(offset):
                 variance of each parameter.
         randomCrop - Choose whether to randomly crop the image. Possible modes:
             'none' - Do no cropping (default).
-            'all' - All crops are equally likely.
+            'uniform' - All crops are equally likely.
+            'valid' - Like uniform, but only for crops with non-negative label.
             'nonzero' - Choose only from crops whose centers have a positive 
                 label. Cannot be used if segList is None.
 	noiseLevel - An array of C elements. Decide the amount of noise for each channel 
@@ -120,7 +121,7 @@ def get_translation_affine(offset):
 
     All transforms fix the center of the image, except for translation.
 """
-def get_xform(im, shape=None, rand_seed=None,
+def get_xform(im, seg=None, shape=None, rand_seed=None,
     rotMax=(0, 0, 0), pReflect=(0, 0, 0), init=np.eye(3),
     shearMax=(1,1,1), transMax=(0,0,0), otherScale=0, randomCrop='none', 
     noiseLevel=None, windowMin=None, windowMax=None, 
@@ -134,9 +135,9 @@ def get_xform(im, shape=None, rand_seed=None,
     ndim = 3
     im = __pad_channel__(im)
 
-    # Pad the shape with a channel dimension
-    if len(shape) == ndim:
-	shape = shape + (1,)
+    # Pad the shape with missing dimensions
+    if len(shape) < ndim + 1:
+        shape = shape + (1,) * (ndim + 1 - len(shape))
     numChannels = shape[-1]
 
     # Check that the input and output shapes are compatible
@@ -171,16 +172,32 @@ def get_xform(im, shape=None, rand_seed=None,
     mat_init = np.identity(4)
     mat_init[0:3, 0:3] = init
 
-    # Get the center of the output shape
+    # Get the center of the input volume
+    im_center = (np.array(im.shape[:3]) - 1.0) / 2.0
     shape_center = (np.array(shape[:3]) - 1.0) / 2.0
 
     # Compute the input crop center
+    crop_half_range = np.maximum(im_center - shape_center, 0)
     if randomCrop == 'none':
-        crop_center = shape_center
+        crop_center = im_center
     elif randomCrop == 'uniform':
-        crop_range = np.maximum(np.array(im.shape[:3]) - np.array(shape[:3]), 0)
-        crop_offset = np.random.uniform(high=crop_range)
-        crop_center = shape_center + crop_offset
+        crop_offset = np.random.uniform(low=-crop_half_range, high=crop_half_range)
+        crop_center = im_center + crop_offset
+    elif randomCrop == 'valid':
+        if seg is None:
+            raise ValueError('Cannot use randomCrop == \'valid\' when seg is not provided!')
+        # Take the intersection of the crop range and valid classes
+        crop_mask = np.zeros(seg.shape, dtype=bool)
+        crop_slices = []
+        for i in range(len(crop_half_range)):
+            lo = int(math.floor(im_center[i] - crop_half_range[i]))
+            hi = int(math.ceil(im_center[i] + crop_half_range[i]))
+            crop_slices.append(slice(lo, hi))
+        crop_mask[crop_slices] = True
+        valid = seg >= 0
+        crop_mask = crop_mask & valid if np.any(valid[crop_slices]) else valid
+        center_idx = np.random.choice(np.nonzero(crop_mask.flatten())[0])
+        crop_center = np.array(np.unravel_index(center_idx, crop_mask.shape))
     elif randomCrop == 'nonzero':
         if seg is None:
             raise ValueError('Cannot use randomCrop == \'nonzero\' when seg is not provided!')
@@ -251,8 +268,8 @@ def get_xform(im, shape=None, rand_seed=None,
     mat_total = set_point_target_affine(
         mat_rotate.dot( mat_shear.dot( mat_reflect.dot( mat_other.dot( mat_init)
 	))),
-        shape_center + translation,
-        crop_center
+        shape_center,
+        crop_center + translation
     )
 
     # Any columns with infinity  are unchanged
