@@ -158,7 +158,8 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     
     # Draw the noise level
     if noiseLevel is not None:
-        noiseScale = np.abs(np.random.normal(scale=noiseLevel))
+        noiseScale = [np.abs(np.random.normal(scale=n)) \
+            if n > 0 else 0 for n in noiseLevel]
     else:
         noiseScale = np.zeros(im.shape[-1])
 
@@ -246,9 +247,11 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     if np.any(shearMax <= 0):
         raise ValueError("Invalid shearMax: %f" % (shear))    
     #shear = np.random.uniform(low=1.0, high=shearMax, size=3)
-    shear = np.random.normal(loc=1.0, scale=np.array(shearMax) / 4, size=3)
+    shearScale = np.abs(np.array(shearMax) - 1.0)
+    shear = np.array([np.random.normal(loc=1.0, 
+        scale=float(s) / 4) if s > 0 else 1.0 for s in shearScale])
     invert_shear = np.random.uniform(size=3) < 0.5
-    shear[invert_shear] = 1.0 / shear[invert_shear]
+    shear[invert_shear] = [1.0 / s if s is not 0 else 0 for s in shear[invert_shear]]
     mat_shear = np.diag(np.hstack((shear, 1)))
 
     # Reflection
@@ -258,11 +261,12 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     # Generic affine transform, Gaussian-distributed
     mat_other = np.identity(4)
     mat_other[0:3, :] = mat_other[0:3, :] + \
-        np.random.normal(loc=0.0, scale=otherScale, size=(3,4))
+        (np.random.normal(loc=0.0, scale=otherScale, size=(3,4)) \
+            if otherScale > 0 else 0)
 
     # Uniform translation
     translation = np.random.uniform(low=-np.array(transMax), 
-            high=transMax)
+            high=transMax) if transMax > 0 else 0
 
     # Compose all the transforms, fix the center of the crop
     mat_total = set_point_target_affine(

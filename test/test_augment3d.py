@@ -46,8 +46,8 @@ apply_and_write_output(im, crop, 'crop.nii.gz')
 noise = augment3d.get_xform(data, noiseLevel=[50])
 apply_and_write_output(im, noise, 'noise.nii.gz')
 
-window = augment3d.get_xform(data, windowMin=np.array([0,0]), 
-	windowMax=np.array([150,150]))
+window = augment3d.get_xform(data, windowMin=np.array([[0],[0]]), 
+	windowMax=np.array([[150],[150]]))
 apply_and_write_output(im, window, 'window.nii.gz')
 
 occlude = augment3d.get_xform(data, occludeProb=1.0)
