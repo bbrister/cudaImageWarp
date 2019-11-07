@@ -4,10 +4,20 @@
 #include <time.h>
 #include <math.h>
 
+/* Core CUDA headers */
 #include <cuda_runtime.h>
 #include <cuda.h>
+
+/* Optional CURAND headers */
+#ifdef WITH_CURAND
 #include <curand.h>
 #include <curand_kernel.h>
+#else
+        /* Dummy definitions for non-curand version */
+        typedef int curandState_t;
+        __device__ void curand_init(int a, int b, int c, curandState_t *state) {}
+        __device__ float curand_normal(curandState_t *state) { return 0.0; }
+#endif
 
 #include "cudaImageWarp.h" // Need this to get C linkage on exported functions
 
@@ -171,6 +181,15 @@ private:
 
 	// Settings
 	const int with_rands = std > 0.0f;
+
+        // Check if this was compiled with curand
+#ifndef WITH_CURAND
+        if (with_rands) {
+                fprintf(stderr, "Received std %f, but library was compiled "
+                        "without cuRand!", std);
+                return -1;
+        }
+#endif
 
         // Convert the input to CUDA datatypes
         const float4 xWarp = {params[0], params[1], params[2], params[3]};
