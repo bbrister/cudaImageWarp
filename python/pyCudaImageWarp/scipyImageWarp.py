@@ -61,3 +61,13 @@ def pop():
         Reimplementaiton of pop() in cudaImageWarp.py
     """
     return pyCudaImageWarp.q.get_nowait()
+
+def warp(im, A, interp='linear', shape=None, std=0.0, 
+	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
+        device=None):
+    """
+        Does a push() then pop()
+    """
+    push(im, A, interp=interp, shape=shape, std=std, winMin=winMin, winMax=winMax, 
+        occZmin=occZmin, occZmax=occZmax, oob=oob, device=device)
+    return pop()
