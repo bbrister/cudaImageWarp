@@ -31,6 +31,22 @@ endif()
 # Find CUDA
 find_package (CUDA REQUIRED)
 
+# Check for curand
+if (CUDA_curand_LIBRARY)
+        set (FOUND_CURAND "ON")
+        message (STATUS "Found curand: ${CUDA_curand_LIBRARY}")
+else ()
+        message (STATUS "Failed to find curand.")
+        set (FOUND_CURAND "OFF")
+endif ()
+set(WITH_CURAND ${FOUND_CURAND} CACHE BOOL "Enable/disable curand support")
+if (WITH_CURAND)
+        add_definitions(-DWITH_CURAND)
+        message(STATUS "Compling with curand...")
+else ()
+        message (STATUS "Compiling WITHOUT curand...")
+endif ()
+
 # Compile the library
 cuda_add_library(cudaImageWarp SHARED cudaImageWarp.cu)
 set_property(TARGET cudaImageWarp
