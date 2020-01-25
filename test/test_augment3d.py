@@ -11,7 +11,7 @@ import nibabel as nib
 from pyCudaImageWarp import augment3d
 
 def apply_and_write_output(im, xform, name, api='cuda', oob=0):
-    out = augment3d.apply_xforms([xform], [im.get_data()], api=api, 
+    out = augment3d.apply_xforms_image([xform], [im.get_data()], api=api,
         oob_image_val=oob)[0][0]
     nib.save(nib.Nifti1Image(out, im.affine, header=im.header), name) 
 

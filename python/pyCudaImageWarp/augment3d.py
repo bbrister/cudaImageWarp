@@ -74,6 +74,19 @@ def get_translation_affine(offset):
     return mat
 
 """
+    Check that the image shape is compatible with the xform shape. 
+"""
+def __check_shapes__(imShape, xformShape, ndim=3):
+    if len(xformShape) > ndim and xformShape[ndim] != imShape[ndim]:
+	raise ValueError("Output shape has %d channels, while input has %d" % \
+		(xformShape[3], imShape[3]))
+    if len(xformShape) != len(imShape):
+	raise ValueError("""
+		Input and output shapes have mismatched number of dimensions.
+		Input: %s, Output: %s"
+		""" % (xformShape, imShape))
+
+"""
     Randomly generates a 3D affine map based on the given parameters. Then 
     applies the map to warp the input image and, optionally, the segmentation.
     Warping is done on the GPU using pyCudaImageWarp. By default, the output
@@ -141,14 +154,7 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     numChannels = shape[-1]
 
     # Check that the input and output shapes are compatible
-    if len(shape) > ndim and shape[ndim] != im.shape[ndim]:
-	raise ValueError("Output shape has %d channels, while input has %d" % \
-		(shape[3], im.shape[3]))
-    if len(shape) != len(im.shape):
-	raise ValueError("""
-		Input and output shapes have mismatched number of dimensions.
-		Input: %s, Output: %s"
-		""" % (shape, im.shape))
+    __check_shapes__(im.shape, shape)
 
     #  Set the random seed, if specified
     if rand_seed is not None:
@@ -330,12 +336,9 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     }
 
 """
-    Apply transforms which were created with get_xform.
+    Choose the implementation based on the api string.
 """
-def apply_xforms(xformList, imList, segList=None,
-    oob_image_val=0, oob_label=0, api='cuda', device=None):
-
-    # Choose the implementation based on api
+def __get_pushFun_popFun__(api):
     if api == 'cuda':
         pushFun = cudaImageWarp.push
         popFun = cudaImageWarp.pop
@@ -346,50 +349,66 @@ def apply_xforms(xformList, imList, segList=None,
     else:
         raise ValueError('Unrecognized api: ' + api)
 
-    # Verify inputs
-    if segList is None and oob_label != 0:
-        raise ValueError('Cannot set oob_label when segList is None')
+    return pushFun, popFun
 
-    # Convert inputs to a list
-    if segList is None:
-        segList = [None for im in imList]
-        haveSeg = False
-    else:
-        haveSeg = True
-    if len(imList) != len(segList):
-        raise ValueError('im and seg must have the same number of elements')
+"""
+    Apply transforms which were created with get_xform.
+"""
+def apply_xforms_image(xformList, imList, oob=0, api='cuda', device=None):
+    return __apply_xforms__(__push_xform_image__, xformList, imList, oob, api, 
+        device)
+
+"""
+    Liky apply_xforms_labels, but for label or integer data.
+"""
+def apply_xforms_labels(xformList, imList, oob=0, api='cuda', device=None):
+    return __apply_xforms__(__push_xform_labels__, xformList, imList, oob, api, 
+        device)
+
+"""
+    Core function for applying xforms. Takes pushf depending on the data type.
+"""
+def __apply_xforms__(pushf, xformList, imList, oob, api, device):
+
+    # Verify inputs
+    if len(xformList) != len(imList):
+        raise ValueError("Received %d xforms but %d images" % (len(xformList), 
+            len(imList)))
+
+    # Get the implementation
+    pushFun, popFun = __get_pushFun_popFun__(api)
 
     # Push all the inputs
-    for im, seg, xform in zip(imList, segList, xformList):
-        __push_xform(xform, im, seg, pushFun, oob_image_val, oob_label, device)
+    for im, xform in zip(imList, xformList):
+        pushf(xform, im, pushFun, oob, device)
 
     # Pop all the outputs
     augImList = []
-    augSegList = []
-    for im, seg, xform in zip(imList, segList, xformList):
-        shape = xform['shape']
+    for im, xform in zip(imList, xformList):
+        shape = xform['shape'][:len(im.shape)]
         augImList.append(__pop_xform(shape, im.dtype, popFun))
-        augSegList.append(None if seg is None else \
-                __pop_xform(shape[:3], seg.dtype, popFun))
 
     # Return two or three outputs, depending on the input
-    return augImList, augSegList if haveSeg else augImList
+    return augImList
 
-def __push_xform(xform, im, seg, pushFun, oob_image_val, oob_label, device):
+def __push_xform_image__(xform, im, pushFun, oob, device):
     """
-        Start processing an image. Called by apply_xforms. Returns the
-        cropping coordinates. Pushes im first, then pushes seg if it's not None.
+        Start processing an image. Called by apply_xforms.
     """
 
     # Add a channel dimension
     im = __pad_channel__(im)
 
+    # Check the shapes
+    __check_shapes__(im.shape, xform['shape'])
+
     # Warp each image channel the same way
     warp_affine = xform['affine'][0:3, :]
     shape = xform['shape'][:3]
-    for c in range(xform['shape'][3]):
+    numChannels = xform['shape'][3]
+    for c in xrange(numChannels):
 	pushFun(
-		im[:, :, :, c], 
+                im[:, :, :, c],
 		warp_affine, 
 		interp='linear',
 		shape=shape,
@@ -398,23 +417,28 @@ def __push_xform(xform, im, seg, pushFun, oob_image_val, oob_label, device):
 		winMax=xform['winMax'][c],
 		occZmin=xform['occZmin'],
 		occZmax=xform['occZmax'],
-                oob=oob_image_val,
+                oob=oob,
                 device=device
 	)
 
-    # Return early if there's no segmentation
-    if seg is None:
-        return
+def __push_xform_labels__(xform, labels, pushFun, oob, device):
+    """
+        Like __push_xform_image__, but for labels.
+    """
 
-    # Warp the segmentation
+    # Check the shapes
+    __check_shapes__(labels.shape[:3], xform['shape'][:3])
+
+    warp_affine = xform['affine'][0:3, :]
+    shape = xform['shape'][:3]
     pushFun(
-	seg, 
+	labels, 
 	warp_affine, 
 	interp='nearest',
 	shape=shape, 
 	occZmin=xform['occZmin'],
 	occZmax=xform['occZmax'],
-        oob=oob_label,
+        oob=oob,
         device=device
     )
 
