@@ -11,8 +11,8 @@ import nibabel as nib
 from pyCudaImageWarp import augment3d
 
 def apply_and_write_output(im, xform, name, api='cuda', oob=0):
-    out = augment3d.apply_xforms_image([xform], [im.get_data()], api=api,
-        oob_image_val=oob)[0][0]
+    out = augment3d.apply_xforms([xform], [im.get_data()], api=api,
+        oob_image=oob)[0][0]
     nib.save(nib.Nifti1Image(out, im.affine, header=im.header), name) 
 
 inPath = sys.argv[1]
@@ -51,7 +51,7 @@ window = augment3d.get_xform(data, windowMin=np.array([[0],[0]]),
 apply_and_write_output(im, window, 'window.nii.gz')
 
 occlude = augment3d.get_xform(data, occludeProb=1.0)
-apply_and_write_output(im, occlude, 'occlude.nii.gz', oob=100)
+apply_and_write_output(im, occlude, 'occlude.nii.gz', oob=10)
 
 # Test the Scipy backup implementation
 apply_and_write_output(im, rotate, 'scipy_rotate.nii.gz', api='scipy')

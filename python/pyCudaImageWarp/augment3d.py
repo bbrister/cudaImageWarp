@@ -74,13 +74,15 @@ def get_translation_affine(offset):
     return mat
 
 """
-    Check that the image shape is compatible with the xform shape. 
+    Check that the image shape is compatible with the xform shape, up to ndim.
+    Ignores channels unless they're >1.
 """
 def __check_shapes__(imShape, xformShape, ndim=3):
-    if len(xformShape) > ndim and xformShape[ndim] != imShape[ndim]:
+    hasChannels = len(imShape) > ndim and imShape[ndim] > 1
+    if hasChannels and xformShape[ndim] != imShape[ndim]:
 	raise ValueError("Output shape has %d channels, while input has %d" % \
 		(xformShape[3], imShape[3]))
-    if len(xformShape) != len(imShape):
+    if len(xformShape[:ndim]) != len(imShape[:ndim]):
 	raise ValueError("""
 		Input and output shapes have mismatched number of dimensions.
 		Input: %s, Output: %s"
@@ -354,42 +356,77 @@ def __get_pushFun_popFun__(api):
 """
     Apply transforms which were created with get_xform.
 """
-def apply_xforms_image(xformList, imList, oob=0, api='cuda', device=None):
-    return __apply_xforms__(__push_xform_image__, xformList, imList, oob, api, 
-        device)
+def apply_xforms(xformList, imList=None, labelsList=None, oob_image=0, 
+        oob_label=0, api='cuda', device=None):
 
-"""
-    Liky apply_xforms_labels, but for label or integer data.
-"""
-def apply_xforms_labels(xformList, imList, oob=0, api='cuda', device=None):
-    return __apply_xforms__(__push_xform_labels__, xformList, imList, oob, api, 
-        device)
-
-"""
-    Core function for applying xforms. Takes pushf depending on the data type.
-"""
-def __apply_xforms__(pushf, xformList, imList, oob, api, device):
+    # Check the operating mode
+    haveImages = imList is not None
+    haveLabels = labelsList is not None
+    if not haveImages and not haveLabels:
+        raise ValueError("Received neither images nor labels!")
 
     # Verify inputs
-    if len(xformList) != len(imList):
+    if haveImages and len(xformList) != len(imList):
         raise ValueError("Received %d xforms but %d images" % (len(xformList), 
             len(imList)))
+    if haveLabels and len(xformList) != len(labelsList):
+        raise ValueError("Received %d xforms but %d labels" % (len(xformList), 
+            len(labelsList)))
 
     # Get the implementation
     pushFun, popFun = __get_pushFun_popFun__(api)
 
-    # Push all the inputs
-    for im, xform in zip(imList, xformList):
-        pushf(xform, im, pushFun, oob, device)
+    # Push all the images
+    if haveImages:
+        __push_xforms_images__(pushFun, xformList, imList, oob_image, device)
 
-    # Pop all the outputs
+    # Push all the labels
+    if haveLabels:
+        __push_xforms_labels__(pushFun, xformList, labelsList, oob_label, 
+                device)
+
+    # Pop all the images
+    returns = []
+    if haveImages:
+        returns.append(__pop_xforms__(imList, xformList, popFun))
+
+    # Pop all the labels
+    if haveLabels:
+        returns.append(__pop_xforms__(labelsList, xformList, popFun))
+
+    return tuple(returns)
+
+def __pop_xforms__(imList, xformList, popFun):
+    """
+        Shortcut to pop a list of outputs, from the given inputs and xforms.
+    """
     augImList = []
     for im, xform in zip(imList, xformList):
         shape = xform['shape'][:len(im.shape)]
         augImList.append(__pop_xform(shape, im.dtype, popFun))
 
-    # Return two or three outputs, depending on the input
     return augImList
+
+def __push_xforms_images__(*args):
+    """
+        Push a list of images. Arguments same as __push_xforms__, except 
+        supplies pushTypeFun.
+    """
+    __push_xforms__(__push_xform_image__, *args)
+
+def __push_xforms_labels__(*args):
+    """ 
+        Push a list of labels. Arugments same as __push_xforms_images__.
+    """
+    __push_xforms__(__push_xform_labels__, *args)
+
+def __push_xforms__(pushTypeFun, pushFun, xformList, imList, oob, device):
+    """
+        Shortcut to push a list of images or labels, using pushTypeFun. Not 
+        called directly.
+    """
+    for im, xform in zip(imList, xformList):
+        pushTypeFun(xform, im, pushFun, oob, device)
 
 def __push_xform_image__(xform, im, pushFun, oob, device):
     """
@@ -451,7 +488,7 @@ def __pop_xform(shape, dtype, popFun):
     """
 
     # Pop multi-channel images one channel at a time
-    if len(shape) > 3:
+    if len(shape) > 3 and shape[3] > 1:
         im = np.zeros(shape, dtype=dtype, order='F')
         for c in range(shape[3]):
             im[:, :, :, c] = popFun()
