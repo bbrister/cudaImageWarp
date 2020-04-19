@@ -6,11 +6,12 @@ Warp an image using scipy. This is a CPU-only implementation of cudaImageWarp.py
 
 import numpy as np
 import scipy.ndimage as nd
-from cudaImageWarp import __check_inputs
 import pyCudaImageWarp
 
+from .cudaImageWarp import __check_inputs
+
 def push(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
+        winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
         oob=0.0, device=None):
     """
         Reimplementation of push() in cudaImageWarp.py
@@ -63,7 +64,7 @@ def pop():
     return pyCudaImageWarp.q.get_nowait()
 
 def warp(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
+        winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
         device=None):
     """
         Does a push() then pop()

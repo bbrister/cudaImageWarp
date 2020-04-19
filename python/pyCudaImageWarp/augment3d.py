@@ -23,40 +23,40 @@ def set_point_target_affine(mat, point, target):
 
 def jitter_mask(labels, pQuit=0.5, maxIter=1, pKeep=0.5, pJagged=0.5):
     """
-	Slightly modify a set of labels, with randomness. Only modifies the 
-	image mask, that is, the labels less than zero. Jitters the perimeter
+        Slightly modify a set of labels, with randomness. Only modifies the 
+        image mask, that is, the labels less than zero. Jitters the perimeter
     """
     # With probability pQuit, do nothing at all
     if np.random.uniform() <= pQuit:
-	return labels
+        return labels
 
     # Do nothing if all the labels are valid
     invalid = labels == -1
     if not np.any(invalid): 
-	return labels
+        return labels
 
     # Randomly draw the number of iterations
     iters = int(round(np.random.uniform(low=1, high=maxIter)))
 
     # Erode or dilate smoothly
     if np.random.uniform() > pJagged:
-	if np.random.uniform() > 0.5:
-	    invalid = nd.morphology.binary_erosion(invalid, iterations=iters)
-	else:
-	    invalid = nd.morphology.binary_dilation(invalid, iterations=iters)
+        if np.random.uniform() > 0.5:
+            invalid = nd.morphology.binary_erosion(invalid, iterations=iters)
+        else:
+            invalid = nd.morphology.binary_dilation(invalid, iterations=iters)
     else:
-	# Jitter the boundary in each iteration
-	for i in range(iters):
+        # Jitter the boundary in each iteration
+        for i in range(iters):
 
-	    # Chose whether to erode or dilate
-	    if np.random.uniform() > 0.5:
-		new = nd.morphology.binary_erosion(invalid)
-	    else:
-		new = nd.morphology.binary_dilation(invalid)
+            # Chose whether to erode or dilate
+            if np.random.uniform() > 0.5:
+                new = nd.morphology.binary_erosion(invalid)
+            else:
+                new = nd.morphology.binary_dilation(invalid)
 
-	    # Get the difference and randomly choose whether to keep them
-	    diff = new ^ invalid
-	    invalid[diff] = np.random.uniform(size=(np.sum(diff),)) <= pKeep
+            # Get the difference and randomly choose whether to keep them
+            diff = new ^ invalid
+            invalid[diff] = np.random.uniform(size=(np.sum(diff),)) <= pKeep
 
     # Return the result
     result = np.zeros_like(labels)
@@ -80,13 +80,13 @@ def get_translation_affine(offset):
 def __check_shapes__(imShape, xformShape, ndim=3):
     hasChannels = len(imShape) > ndim and imShape[ndim] > 1
     if hasChannels and xformShape[ndim] != imShape[ndim]:
-	raise ValueError("Output shape has %d channels, while input has %d" % \
-		(xformShape[3], imShape[3]))
+        raise ValueError("Output shape has %d channels, while input has %d" % \
+                (xformShape[3], imShape[3]))
     if len(xformShape[:ndim]) != len(imShape[:ndim]):
-	raise ValueError("""
-		Input and output shapes have mismatched number of dimensions.
-		Input: %s, Output: %s"
-		""" % (xformShape, imShape))
+        raise ValueError("""
+                Input and output shapes have mismatched number of dimensions.
+                Input: %s, Output: %s"
+                """ % (xformShape, imShape))
 
 """
     Randomly generates a 3D affine map based on the given parameters. Then 
@@ -117,18 +117,18 @@ def __check_shapes__(imShape, xformShape, ndim=3):
             'valid' - Like uniform, but only for crops with non-negative label.
             'nonzero' - Choose only from crops whose centers have a positive 
                 label. Cannot be used if segList is None.
-	noiseLevel - An array of C elements. Decide the amount of noise for each channel 
+        noiseLevel - An array of C elements. Decide the amount of noise for each channel 
             using this standard deviation.
-	windowMin - A 2xC matrix, where C is the number of channels in im, 
+        windowMin - A 2xC matrix, where C is the number of channels in im, 
             from which the lower window threshold is sampled uniformly. By 
             default, this does nothing. The cth row defines the limits for the 
             cth channel.
-	windowMax - A matrix from which the upper window threshold is
+        windowMax - A matrix from which the upper window threshold is
             sampled uniformly. Same format as winMin. By default, this does 
             nothing.
-	occludeProb - Probability that we randomly take out a chunk of out of 
+        occludeProb - Probability that we randomly take out a chunk of out of 
             the image.
-	oob_label - The label assigned to out-of-bounds pixels (default: 0)
+        oob_label - The label assigned to out-of-bounds pixels (default: 0)
         printFun - If provided, use this function to print the parameters.
         oob_image_val - If provided, set out-of-bounds voxels to this value.
         api - The underlying computation platform. Either 'cuda' or 'scipy'.
@@ -252,14 +252,15 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     mat_rotate[0:3, 0:3] = lin_rotate
 
     # Uniform shear, same chance of shrinking and growing
+    shearMax = np.array(shearMax)
     if np.any(shearMax <= 0):
         raise ValueError("Invalid shearMax: %f" % (shear))    
     #shear = np.random.uniform(low=1.0, high=shearMax, size=3)
-    shearScale = np.abs(np.array(shearMax) - 1.0)
+    shearScale = np.abs(shearMax - 1.0)
     shear = np.array([np.random.normal(loc=1.0, 
         scale=float(s) / 4) if s > 0 else 1.0 for s in shearScale])
     invert_shear = np.random.uniform(size=3) < 0.5
-    shear[invert_shear] = [1.0 / s if s is not 0 else 0 for s in shear[invert_shear]]
+    shear[invert_shear] = [1.0 / s if s != 0 else 0 for s in shear[invert_shear]]
     mat_shear = np.diag(np.hstack((shear, 1)))
 
     # Reflection
@@ -273,13 +274,14 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
             if otherScale > 0 else 0)
 
     # Uniform translation
-    translation = np.random.uniform(low=-np.array(transMax), 
-            high=transMax) if transMax > 0 else 0
+    transMax = np.array(transMax)
+    translation = np.random.uniform(low=-transMax, 
+            high=transMax) if np.any(transMax > 0) else 0
 
     # Compose all the transforms, fix the center of the crop
     mat_total = set_point_target_affine(
         mat_rotate.dot( mat_shear.dot( mat_reflect.dot( mat_other.dot( mat_init)
-	))),
+        ))),
         shape_center,
         crop_center + translation
     )
@@ -308,14 +310,14 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
 
     # Draw the occlusion parameters
     if occludeWidth is not None:
-	# Take a chunk out at random	
-	occZmin = int(np.floor(np.random.uniform(
-		low=-occludeWidth, high=im.shape[2])))
-	occZmax = occZmin + occludeWidth - 1
+        # Take a chunk out at random    
+        occZmin = int(np.floor(np.random.uniform(
+                low=-occludeWidth, high=im.shape[2])))
+        occZmax = occZmin + occludeWidth - 1
     else:
-	# By default, do no occlusion
-	occZmin = 0
-	occZmax = -1
+        # By default, do no occlusion
+        occZmin = 0
+        occZmax = -1
 
     # Optionally print the result
     if printFun is not None:
@@ -353,11 +355,27 @@ def __get_pushFun_popFun__(api):
 
     return pushFun, popFun
 
-"""
-    Apply transforms which were created with get_xform.
-"""
+def apply_xforms_images(xformList, imList, oob=0, 
+        api='cuda', device=None):
+    """
+        Shortcut for only images.
+    """
+    return apply_xforms(xformList, imList=imList, oob_image=oob, 
+        api=api, device=device)
+
+def apply_xforms_labels(xformList, labelsList, oob=0, 
+        api='cuda', device=None):
+    """
+        Shortcut for only labels.
+    """
+    return apply_xforms(xformList, labelsList=labelsList, oob_labels=oob, 
+        api=api, device=device)
+
 def apply_xforms(xformList, imList=None, labelsList=None, oob_image=0, 
         oob_label=0, api='cuda', device=None):
+    """
+        Apply transforms which were created with get_xform.
+    """
 
     # Check the operating mode
     haveImages = imList is not None
@@ -443,20 +461,20 @@ def __push_xform_image__(xform, im, pushFun, oob, device):
     warp_affine = xform['affine'][0:3, :]
     shape = xform['shape'][:3]
     numChannels = xform['shape'][3]
-    for c in xrange(numChannels):
-	pushFun(
+    for c in range(numChannels):
+        pushFun(
                 im[:, :, :, c],
-		warp_affine, 
-		interp='linear',
-		shape=shape,
-		std=xform['noiseScale'][c],
-		winMin=xform['winMin'][c],
-		winMax=xform['winMax'][c],
-		occZmin=xform['occZmin'],
-		occZmax=xform['occZmax'],
+                warp_affine, 
+                interp='linear',
+                shape=shape,
+                std=xform['noiseScale'][c],
+                winMin=xform['winMin'][c],
+                winMax=xform['winMax'][c],
+                occZmin=xform['occZmin'],
+                occZmax=xform['occZmax'],
                 oob=oob,
                 device=device
-	)
+        )
 
 def __push_xform_labels__(xform, labels, pushFun, oob, device):
     """
@@ -469,12 +487,12 @@ def __push_xform_labels__(xform, labels, pushFun, oob, device):
     warp_affine = xform['affine'][0:3, :]
     shape = xform['shape'][:3]
     pushFun(
-	labels, 
-	warp_affine, 
-	interp='nearest',
-	shape=shape, 
-	occZmin=xform['occZmin'],
-	occZmax=xform['occZmax'],
+        labels, 
+        warp_affine, 
+        interp='nearest',
+        shape=shape, 
+        occZmin=xform['occZmin'],
+        occZmax=xform['occZmax'],
         oob=oob,
         device=device
     )

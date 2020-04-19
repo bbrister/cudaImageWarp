@@ -21,22 +21,22 @@ def __check_inputs(im, A, shape, device):
             raise ValueError(
                     "received device %d, must be non-negative!" % device)
 
-	# Default to the same shape as im
-	if shape is None:
-	    shape = im.shape
+        # Default to the same shape as im
+        if shape is None:
+            shape = im.shape
 
         # Check the dimensions
         ndim = 3;
-	Ashape = (ndim, ndim + 1)
-	if len(im.shape) != ndim:
-		raise ValueError("im has shape %s, expected %d dimensions" % \
-			(im.shape, ndim))
-	if len(shape) != ndim:
-		raise ValueError("received output shape %s, expected %d "
-			"dimensions" % (shape, ndim))
-	if not np.equal(A.shape, Ashape).all():
-		raise ValueError("Expected A shape %s, received %s" % \
-			(Ashape, A.shape))
+        Ashape = (ndim, ndim + 1)
+        if len(im.shape) != ndim:
+                raise ValueError("im has shape %s, expected %d dimensions" % \
+                        (im.shape, ndim))
+        if len(shape) != ndim:
+                raise ValueError("received output shape %s, expected %d "
+                        "dimensions" % (shape, ndim))
+        if not np.equal(A.shape, Ashape).all():
+                raise ValueError("Expected A shape %s, received %s" % \
+                        (Ashape, A.shape))
 
         return shape, device
 
@@ -53,7 +53,7 @@ def __convert_inputs(im, A, interp):
         interpCode = interpMap[interp]
 
         # Convert the inputs to C float arrays
-	dtype = im.dtype
+        dtype = im.dtype
         im = np.require(im, dtype='float32', requirements=['F', 'A'])
         A = np.require(A, dtype='float32', requirements=['C', 'A'])
 
@@ -81,16 +81,16 @@ Warp a since image. Returns the result in the same datatype as the input.
 
 Arguments:
         im -- An image volume, i.e. a 3D numpy array. Indexed in Fortran order,
-		e.g. im[x, y, z].
+                e.g. im[x, y, z].
         A -- A [4x3] matrix defining the transformation. A[0, :] applies to the
-		x-coordinates, A[1, :] the y-coordinates, A[2, :] the 
-		z-coordinates. See im for more details.
+                x-coordinates, A[1, :] the y-coordinates, A[2, :] the 
+                z-coordinates. See im for more details.
         interp -- The interpolation type. Supported values are either 
                 'linear' (default) or 'nearest'.
         shape -- The shape of the output. By default, this is the same as the 
                 input. This can be used to crop or pad an image.
-	std -- The standard derviation of white Gaussian noise added to the
-		output.
+        std -- The standard derviation of white Gaussian noise added to the
+                output.
         winMax -- The maximum intensity value to be used in the window.
         winMin -- The minimum intensity value to be used in the window.
         occZmin -- The minimum z-value to be occluded.
@@ -99,7 +99,7 @@ Arguments:
         device -- The ID of the CUDA device to be used. (Optional)
 """
 def warp(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
+        winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
         device=None):
 
         # Handle inputs
@@ -116,17 +116,17 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
                 ctypes.c_int(im.shape[1]), 
                 ctypes.c_int(im.shape[2]), 
                 out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-		ctypes.c_int(shape[0]),
-		ctypes.c_int(shape[1]),
-		ctypes.c_int(shape[2]),
+                ctypes.c_int(shape[0]),
+                ctypes.c_int(shape[1]),
+                ctypes.c_int(shape[2]),
                 ctypes.c_int(interpCode),
                 A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-		ctypes.c_float(std),
-		ctypes.c_float(winMin),
-		ctypes.c_float(winMax),
-		ctypes.c_int(occZmin),
-		ctypes.c_int(occZmax),
-		ctypes.c_float(oob),
+                ctypes.c_float(std),
+                ctypes.c_float(winMin),
+                ctypes.c_float(winMax),
+                ctypes.c_int(occZmin),
+                ctypes.c_int(occZmax),
+                ctypes.c_float(oob),
                 ctypes.c_int(device)
         )
 
@@ -141,7 +141,7 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
 Push an image onto the queue. See warp() for parameters.
 """
 def push(im, A, interp='linear', shape=None, std=0.0, 
-	winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
+        winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
         oob=0, device=None):
 
         # Handle inputs
@@ -154,17 +154,17 @@ def push(im, A, interp='linear', shape=None, std=0.0,
                 ctypes.c_int(im.shape[0]), 
                 ctypes.c_int(im.shape[1]), 
                 ctypes.c_int(im.shape[2]), 
-		ctypes.c_int(shape[0]),
-		ctypes.c_int(shape[1]),
-		ctypes.c_int(shape[2]),
+                ctypes.c_int(shape[0]),
+                ctypes.c_int(shape[1]),
+                ctypes.c_int(shape[2]),
                 ctypes.c_int(interpCode),
                 A.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-		ctypes.c_float(std),
-		ctypes.c_float(winMin),
-		ctypes.c_float(winMax),
-		ctypes.c_int(occZmin),
-		ctypes.c_int(occZmax),
-		ctypes.c_float(oob),
+                ctypes.c_float(std),
+                ctypes.c_float(winMin),
+                ctypes.c_float(winMax),
+                ctypes.c_int(occZmin),
+                ctypes.c_int(occZmax),
+                ctypes.c_float(oob),
                 ctypes.c_int(device)
         )
 

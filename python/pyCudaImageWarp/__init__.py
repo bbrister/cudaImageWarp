@@ -8,13 +8,17 @@ Python module initializer for CUDA image warper.
 import os
 import ctypes
 
-# Initialize a queue for recording inputs
+# Import queue -- annoying that the name keeps changing
 try:
     import queue
+except:
+    import Queue as queue
+
+# Initialize a queue for recording inputs
+try:
     q = queue.queue()
 except:
-    import Queue
-    q = Queue.Queue()
+    q = queue.Queue()
 
 # Load the library
 libName = 'libcudaImageWarp.so'
