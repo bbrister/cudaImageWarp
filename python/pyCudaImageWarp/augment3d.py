@@ -88,6 +88,43 @@ def __check_shapes__(imShape, xformShape, ndim=3):
                 Input: %s, Output: %s"
                 """ % (xformShape, imShape))
 
+        crop_offset = np.random.uniform(low=-crop_half_range, high=crop_half_range)
+        crop_center = im_center + crop_offset
+
+def __shape_center__(shape):
+    return (np.array(shape[:3]) - 1.0) / 2.0
+
+def __crop_uniform__(im_center, crop_half_range):
+        crop_offset = np.random.uniform(low=-crop_half_range, high=crop_half_range)
+        crop_center = im_center + crop_offset
+        return crop_center
+
+def __crop_in_mask__(crop_half_range, mask, printFun=None):
+    """
+        Crop only in this mask, if at all possible
+    """
+
+    # Compute shape parameters
+    im_center = __shape_center__(mask.shape) 
+
+    # Check if the mask is empty
+    if not np.any(mask):
+        if printFun is not None:
+            printFun("Defaulting to uniform crop...")
+        return __crop_uniform__(im_center, crop_half_range)
+
+    # Pick a random center in the range
+    center_idx = np.random.choice(np.nonzero(mask.flatten())[0])
+    crop_center = np.array(np.unravel_index(center_idx, mask.shape))
+
+    # Pick the nearest valid crop to this center
+    crop_disp = crop_center - im_center
+    crop_disp_valid = np.minimum(crop_half_range, 
+        np.maximum(crop_disp, -crop_half_range)
+    )
+    crop_center = im_center + crop_disp_valid
+
+    return crop_center
 """
     Randomly generates a 3D affine map based on the given parameters. Then 
     applies the map to warp the input image and, optionally, the segmentation.
@@ -182,50 +219,41 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     mat_init[0:3, 0:3] = init
 
     # Get the center of the input volume
-    im_center = (np.array(im.shape[:3]) - 1.0) / 2.0
-    shape_center = (np.array(shape[:3]) - 1.0) / 2.0
+    im_center = __shape_center__(im.shape)
+    shape_center = __shape_center__(shape)
 
     # Compute the input crop center
+    if printFun is not None:
+        printFun("cropType: %s" % randomCrop)
     crop_half_range = np.maximum(im_center - shape_center, 0)
     if randomCrop == 'none':
         crop_center = im_center
     elif randomCrop == 'uniform':
-        crop_offset = np.random.uniform(low=-crop_half_range, high=crop_half_range)
-        crop_center = im_center + crop_offset
+        crop_center = __crop_uniform__(im_center, crop_half_range)
     elif randomCrop == 'valid':
         if seg is None:
             raise ValueError('Cannot use randomCrop == \'valid\' when seg is not provided!')
         # Take the intersection of the crop range and valid classes
-        crop_mask = np.zeros(seg.shape, dtype=bool)
-        crop_slices = []
-        for i in range(len(crop_half_range)):
-            lo = int(math.floor(im_center[i] - crop_half_range[i]))
-            hi = int(math.ceil(im_center[i] + crop_half_range[i]))
-            crop_slices.append(slice(lo, hi))
-        crop_mask[crop_slices] = True
-        valid = seg >= 0
-        crop_mask = crop_mask & valid if np.any(valid[crop_slices]) else valid
-        center_idx = np.random.choice(np.nonzero(crop_mask.flatten())[0])
-        crop_center = np.array(np.unravel_index(center_idx, crop_mask.shape))
+        crop_center = __crop_in_mask__(crop_half_range, seg >= 0)
     elif randomCrop == 'nonzero':
         if seg is None:
             raise ValueError('Cannot use randomCrop == \'nonzero\' when seg is not provided!')
         # First pick a class, accounting for label shifting
         classes = np.unique(seg.flatten())
-        rand_class = np.random.choice(classes[classes > 1])
+        classes = classes[classes >= 1]
+        if len(classes) == 0:
+            if printFun is not None:
+                printFun("Defaulting to uniform crop...")
+            crop_center = __crop_uniform__(im_center, crop_half_range) 
+        else:
+            rand_class = np.random.choice(classes)
 
-        # Now pick a center from one of the indices
-        center_idx = np.random.choice(np.nonzero(seg.flatten() == rand_class)[0])
+            if printFun is not None:
+                printFun("crop_class: %d" % rand_class)
 
-        if printFun is not None:
-            printFun("crop_class: %d" % rand_class)
+            # Same as valid crop, but with this class
+            crop_center = __crop_in_mask__(crop_half_range, seg == rand_class)
 
-        """
-        # Pick a center coordinate from the ones with non-zero label, 
-        # accounting for label shifting
-        center_idx = np.random.choice(np.nonzero(seg.flatten() > 1)[0])
-        """
-        crop_center = np.array(np.unravel_index(center_idx, seg.shape))
     else:
         raise ValueError('Unrecognized randomCrop: ' + randomCrop)
 
@@ -276,7 +304,7 @@ def get_xform(im, seg=None, shape=None, rand_seed=None,
     # Uniform translation
     transMax = np.array(transMax)
     translation = np.random.uniform(low=-transMax, 
-            high=transMax) if np.any(transMax > 0) else 0
+            high=transMax) if np.any(transMax > 0) else np.zeros_like(transMax)
 
     # Compose all the transforms, fix the center of the crop
     mat_total = set_point_target_affine(
