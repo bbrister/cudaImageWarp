@@ -7,8 +7,13 @@ Warp an image using scipy. This is a CPU-only implementation of cudaImageWarp.py
 import numpy as np
 import scipy.ndimage as nd
 import pyCudaImageWarp
+import concurrent
+import os
 
 from .cudaImageWarp import __check_inputs
+
+# Place to store worker threads
+threadPool = concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count())
 
 def push(im, A, interp='linear', shape=None, std=0.0, 
         winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
@@ -26,12 +31,35 @@ def push(im, A, interp='linear', shape=None, std=0.0,
         'linear': 1
     }
 
+
+    # Push the threadpool future into a queue
+    pyCudaImageWarp.q.put(threadPool.submit(
+        __warp_im__,
+        im,
+        A,
+        interpMap[interp],
+        shape,
+        std,
+        winMin,
+        winMax,
+        occZmin,
+        occZmax,
+        oob
+    ))
+
+
+def __warp_im__(im=None, A=None, interpCode=None, shape=None, std=None,
+        winMin=None, winMax=None, occZmin=None, occZmax=None, oob=None):
+    """
+        Main function for image processing. Called in the thread pool.
+    """
+       
     # Affine warping
     im = nd.affine_transform(
         im, 
         A, 
         output_shape=shape, 
-        order=interpMap[interp], 
+        order=interpCode, 
         mode='constant',
         cval=oob,
         prefilter=False
@@ -54,14 +82,13 @@ def push(im, A, interp='linear', shape=None, std=0.0,
     if occHi > occLo:
         im[:, :, occLo : occHi] = 0.0
 
-    # Push all the output into a queue, for compatibility with the GPU version
-    pyCudaImageWarp.q.put(im)
+    return im
 
 def pop():
     """
         Reimplementaiton of pop() in cudaImageWarp.py
     """
-    return pyCudaImageWarp.q.get_nowait()
+    return pyCudaImageWarp.q.get_nowait().result(timeout=30)
 
 def warp(im, A, interp='linear', shape=None, std=0.0, 
         winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
