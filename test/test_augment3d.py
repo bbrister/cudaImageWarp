@@ -19,38 +19,38 @@ inPath = sys.argv[1]
 
 # Load the image
 im = nib.load(inPath)
-data = im.get_data()
+in_shape = im.get_data().shape
 
 # Test the augmenter with each transform
-identity = augment3d.get_xform(data)
+identity = augment3d.get_xform(in_shape)
 apply_and_write_output(im, identity, 'identity.nii.gz')
 
-rotate = augment3d.get_xform(data, rotMax=(90, 90, 90))
+rotate = augment3d.get_xform(in_shape, rotMax=(90, 90, 90))
 apply_and_write_output(im, rotate, 'rotate.nii.gz')
 
-reflect = augment3d.get_xform(data, pReflect=(0, 0, 1))
+reflect = augment3d.get_xform(in_shape, pReflect=(0, 0, 1))
 apply_and_write_output(im, reflect, 'reflect.nii.gz')
 
-shear = augment3d.get_xform(data, shearMax=(2,0,0))
+shear = augment3d.get_xform(in_shape, shearMax=(2,1,1))
 apply_and_write_output(im, shear, 'shear.nii.gz')
 
-translate = augment3d.get_xform(data, transMax=(30,30,30))
+translate = augment3d.get_xform(in_shape, transMax=(30,30,30))
 apply_and_write_output(im, translate, 'translate.nii.gz')
 
-other = augment3d.get_xform(data, otherScale=0.33)
+other = augment3d.get_xform(in_shape, otherScale=0.33)
 apply_and_write_output(im, other, 'other.nii.gz')
 
-crop = augment3d.get_xform(data, shape=(100, 100, 100))
+crop = augment3d.get_xform(in_shape, outShape=(100, 100, 100))
 apply_and_write_output(im, crop, 'crop.nii.gz')
 
-noise = augment3d.get_xform(data, noiseLevel=[50])
+noise = augment3d.get_xform(in_shape, noiseLevel=[50])
 apply_and_write_output(im, noise, 'noise.nii.gz')
 
-window = augment3d.get_xform(data, windowMin=np.array([[0],[0]]), 
+window = augment3d.get_xform(in_shape, windowMin=np.array([[0],[0]]), 
 	windowMax=np.array([[150],[150]]))
 apply_and_write_output(im, window, 'window.nii.gz')
 
-occlude = augment3d.get_xform(data, occludeProb=1.0)
+occlude = augment3d.get_xform(in_shape, occludeProb=1.0)
 apply_and_write_output(im, occlude, 'occlude.nii.gz', oob=10)
 
 # Test the Scipy backup implementation
