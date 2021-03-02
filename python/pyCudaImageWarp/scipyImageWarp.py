@@ -1,13 +1,13 @@
 """
 Warp an image using scipy. This is a CPU-only implementation of cudaImageWarp.py. 
 
-(c) Blaine Rister 2018
+(c) Blaine Rister 2018-2021
 """
 
 import numpy as np
 import scipy.ndimage as nd
 import pyCudaImageWarp
-import concurrent
+import concurrent.futures
 import os
 
 from .cudaImageWarp import __check_inputs
