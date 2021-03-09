@@ -254,7 +254,7 @@ def get_xform(inShape, seg=None, outShape=None, randSeed=None,
     elif randomCrop == 'nonzero':
         if seg is None:
             raise ValueError('Cannot use randomCrop == \'nonzero\' when seg is not provided!')
-        crop_center, object_center = __crop_in_mask__(crop_half_range, seg)
+        crop_center, object_center = __crop_in_mask__(crop_half_range, seg > 0)
     else:
         raise ValueError('Unrecognized randomCrop: ' + randomCrop)
 
