@@ -53,6 +53,9 @@ def __warp_im__(im=None, A=None, interpCode=None, shape=None, std=None,
     """
         Main function for image processing. Called in the thread pool.
     """
+
+    # Convert to float 32
+    im = im.astype(np.float32)
        
     # Affine warping
     im = nd.affine_transform(

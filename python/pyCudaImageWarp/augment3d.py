@@ -393,18 +393,21 @@ def apply_xforms_images(xformList, imList, oob=0,
     return apply_xforms(xformList, imList=imList, oob_image=oob, 
         api=api, device=device)
 
-def apply_xforms_labels(xformList, labelsList, oob=0, 
+def apply_xforms_labels(xformList, labelsList, oob=0, rounding=None, 
         api='cuda', device=None):
     """
         Shortcut for only labels.
     """
     return apply_xforms(xformList, labelsList=labelsList, oob_labels=oob, 
-        api=api, device=device)
+        rounding=rounding, api=api, device=device)
 
 def apply_xforms(xformList, imList=None, labelsList=None, oob_image=0, 
-        oob_label=0, api='cuda', device=None):
+        oob_label=0, rounding=None, api='cuda', device=None):
     """
-        Apply transforms which were created with get_xform.
+        Apply transforms which were created with get_xform. Applies rounding to
+            the labels. Rounding options:
+            None - Default float to int conversion
+            'ceil' - Rounds up    
     """
 
     # Check the operating mode
@@ -440,9 +443,31 @@ def apply_xforms(xformList, imList=None, labelsList=None, oob_image=0,
 
     # Pop all the labels
     if haveLabels:
-        returns.append(__pop_xforms__(labelsList, xformList, popFun))
+        returns.append(
+            [__round_image__(im=im, rounding=rounding) for im in __pop_xforms__(
+                labelsList, xformList, popFun)]
+        )
 
     return tuple(returns)
+
+def __round_image__(im=None, rounding=None):
+    """
+        Rounds the image according to the rounding mode.
+    """
+
+    if rounding is None:
+        return im
+
+    roundFunMap = {
+        'ceil': np.ceil
+    }
+
+    try:
+        roundFun = roundFunMap[rounding]
+    except KeyError:
+        raise ValueError("Unrecognized rounding mode: %s" % rounding)
+
+    return roundFun(im).astype(int)
 
 def __pop_xforms__(imList, xformList, popFun):
     """

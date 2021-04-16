@@ -53,11 +53,10 @@ def __convert_inputs(im, A, interp):
         interpCode = interpMap[interp]
 
         # Convert the inputs to C float arrays
-        dtype = im.dtype
         im = np.require(im, dtype='float32', requirements=['F', 'A'])
         A = np.require(A, dtype='float32', requirements=['C', 'A'])
 
-        return im, dtype, A, interpCode
+        return im, A, interpCode
 
 """
 Create a C float array for the output
@@ -73,8 +72,8 @@ Shortcut to take care of inputs.
 """
 def __handle_inputs(im, A, shape, interp, device):
         shape, device = __check_inputs(im, A, shape, device)
-        im, dtype, A, interpCode = __convert_inputs(im, A, interp)
-        return im, dtype, A, shape, interpCode, device
+        im, A, interpCode = __convert_inputs(im, A, interp)
+        return im, A, shape, interpCode, device
 
 """
 Warp a since image. Returns the result in the same datatype as the input.
@@ -96,14 +95,17 @@ Arguments:
         occZmin -- The minimum z-value to be occluded.
         occZmax -- The maximum z-value to be occluded.
         oob - The value assigned to out-of-bounds voxels.
+        rounding - The rounding mode applied to the output. The options are:
+                'nearest' - Python default float to input type conversion
+                'positive' - 
         device -- The ID of the CUDA device to be used. (Optional)
 """
 def warp(im, A, interp='linear', shape=None, std=0.0, 
         winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, oob=0,
-        device=None):
+        rounding='default', device=None):
 
         # Handle inputs
-        im, dtype, A, shape, interpCode, device = __handle_inputs(im, A, shape,
+        im, A, shape, interpCode, device = __handle_inputs(im, A, shape,
                 interp, device)
 
         # Create the output
@@ -133,8 +135,8 @@ def warp(im, A, interp='linear', shape=None, std=0.0,
         if ret != 0:
                 raise ValueError(ret)
 
-        # Convert data type
-        return out.astype(dtype)
+        # Returns in float32 format 
+        return out
 
 
 """
@@ -142,10 +144,10 @@ Push an image onto the queue. See warp() for parameters.
 """
 def push(im, A, interp='linear', shape=None, std=0.0, 
         winMin=-float('inf'), winMax=float('inf'), occZmin=0, occZmax=-1, 
-        oob=0, device=None):
+        oob=0, rounding='default', device=None):
 
         # Handle inputs
-        im, dtype, A, shape, interpCode, device = __handle_inputs(im, A, shape,
+        im, A, shape, interpCode, device = __handle_inputs(im, A, shape,
                 interp, device)
 
         # Enqueue the image warping
@@ -174,7 +176,7 @@ def push(im, A, interp='linear', shape=None, std=0.0,
         # Push the inputs onto the queue
         pyCudaImageWarp.q.put({
                 'shape': shape,
-                'dtype': dtype
+                'rounding': rounding
         })
 
 """ 
@@ -197,5 +199,5 @@ def pop():
         if ret != 0:
                 raise ValueError(ret)
 
-        # Return and convert data type
-        return out.astype(inputs['dtype'])
+        # Returns in float32 format 
+        return out
